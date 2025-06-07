@@ -1,0 +1,10 @@
+[package]
+name = "vscfreedev_client"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+vscfreedev_core = { path = "../core" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+anyhow = "1"
+thiserror = "2"
