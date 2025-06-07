@@ -5,6 +5,10 @@ edition = "2024"
 
 [dependencies]
 vscfreedev_core = { path = "../core" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+vscfreedev_remote = { path = "../remote" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs", "process"] }
 anyhow = "1"
 thiserror = "2"
+ssh2 = "0.9"
+tempfile = "3"
+bytes = "1"
