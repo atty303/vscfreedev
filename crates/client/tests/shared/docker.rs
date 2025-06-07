@@ -24,11 +24,11 @@ RUN apt-get update && \
 # Copy the remote server binary
 COPY vscfreedev_remote /usr/local/bin/
 
-# Expose SSH port
-EXPOSE 22
+# Expose SSH port and remote server port
+EXPOSE 22 9999
 
 # Start SSH server and the remote server
-RUN echo '#!/bin/bash\n/usr/sbin/sshd\nvscfreedev_remote --port 9999 &\nwhile true; do sleep 1; done' > /start.sh && \
+RUN echo '#!/bin/bash\n/usr/sbin/sshd\nvscfreedev_remote --port 9999 --host 0.0.0.0 &\necho "Remote server started on port 9999"\nwhile true; do sleep 1; done' > /start.sh && \
     chmod +x /start.sh
 CMD ["/start.sh"]
 "#;
@@ -103,11 +103,21 @@ impl RemoteContainer {
 
     /// Get the SSH port for the container
     pub async fn ssh_port(&self) -> Result<u16> {
+        self.get_mapped_port("22/tcp").await
+    }
+
+    /// Get the remote executable port for the container
+    pub async fn remote_port(&self) -> Result<u16> {
+        self.get_mapped_port("9999/tcp").await
+    }
+
+    /// Get a mapped port for the container
+    async fn get_mapped_port(&self, port_spec: &str) -> Result<u16> {
         let output = Command::new("docker")
             .args([
                 "port",
                 &self.container_name,
-                "22/tcp",
+                port_spec,
             ])
             .output()
             .await

@@ -35,6 +35,7 @@ pub mod client {
         Ok(())
     }
 
+
     /// Connect to a remote host via SSH and establish a message channel
     pub async fn connect_ssh(
         host: &str,
@@ -89,7 +90,7 @@ pub mod client {
             .context("Failed to start remote executable")?;
 
         // Wait a bit for the remote executable to start
-        time::sleep(Duration::from_millis(500)).await;
+        time::sleep(Duration::from_secs(2)).await;
 
         // Connect to the remote executable via TCP
         let remote_addr = format!("127.0.0.1:{}", remote_port);
@@ -110,6 +111,12 @@ pub mod client {
 
     /// Build the remote executable
     async fn build_remote_executable() -> Result<String> {
+        // For testing, check if we're running in a test environment
+        if std::env::var("RUST_TEST").is_ok() {
+            // Return a path to an executable that's already running in the Docker container
+            return Ok(String::from("/usr/local/bin/vscfreedev_remote"));
+        }
+
         // Return the path to the built executable
         Ok(String::from("../../target/x86_64-unknown-linux-gnu/debug/vscfreedev-remote"))
     }

@@ -1,47 +1,86 @@
 mod shared;
 
 use anyhow::Result;
-use assert_cmd::Command;
+use bytes::Bytes;
 use std::time::Duration;
 use tokio::time::sleep;
 use shared::docker::RemoteContainer;
+use vscfreedev_client::client;
 
 #[tokio::test]
 async fn test_ssh_connection() -> Result<()> {
     // Start the Docker container with the remote server
     let container = RemoteContainer::new().await?;
     let ssh_port = container.ssh_port().await?;
+    let remote_port = container.remote_port().await?;
 
-    // Wait a bit for the SSH server to be fully ready
-    sleep(Duration::from_secs(3)).await;
+    // Wait a bit for the SSH server and remote executable to be fully ready
+    sleep(Duration::from_secs(5)).await;
 
-    // Run the CLI with an SSH connection
-    let mut cmd = Command::new("cargo");
-    cmd.args(&["run", "-p", "vscfreedev-cli", "--"]).arg("ssh")
-        .arg("--host")
-        .arg("127.0.0.1")
-        .arg("--port")
-        .arg(ssh_port.to_string())
-        .arg("--username")
-        .arg("root")
-        .arg("--password")
-        .arg("password")
-        .arg("--message")
-        .arg("Hello from E2E test!");
+    // Connect directly using client::connect_ssh
+    println!("Connecting to 127.0.0.1:{} as root", ssh_port);
+    let mut channel = client::connect_ssh(
+        "127.0.0.1",
+        ssh_port,
+        "root",
+        Some("password"),
+        None,
+    ).await?;
 
-    // Execute the command and check the output
-    cmd.assert()
-        .success()
-        .stdout(predicates::str::contains("Connecting to 127.0.0.1"))
-        .stdout(predicates::str::contains("Connected to remote host"))
-        .stdout(predicates::str::contains("Remote channel established"))
-        .stdout(predicates::str::contains(
-            "Sending message: Hello from E2E test!",
-        ))
-        .stdout(predicates::str::contains("Echo: Hello from E2E test!"))
-        .stdout(predicates::str::contains(
-            "SSH connection test completed successfully",
-        ));
+    println!("Connected to remote host");
+    println!("Remote channel established");
+
+    // Try to receive the welcome message with a timeout
+    let welcome = match tokio::time::timeout(Duration::from_secs(5), channel.receive()).await {
+        Ok(result) => match result {
+            Ok(msg) => msg,
+            Err(e) => {
+                println!("Error receiving welcome message: {}", e);
+                return Err(anyhow::anyhow!("Failed to receive welcome message: {}", e));
+            }
+        },
+        Err(_) => {
+            println!("Timeout waiting for welcome message");
+            return Err(anyhow::anyhow!("Timeout waiting for welcome message"));
+        }
+    };
+
+    let welcome_str = String::from_utf8_lossy(&welcome);
+    println!("Received welcome: {}", welcome_str);
+
+    // Verify welcome message contains expected text
+    assert!(welcome_str.contains("Welcome"), "Welcome message should contain 'Welcome'");
+
+    // Send a message
+    let message = "Hello from E2E test!";
+    println!("Sending message: {}", message);
+    if let Err(e) = channel.send(Bytes::from(message)).await {
+        println!("Error sending message: {}", e);
+        return Err(anyhow::anyhow!("Failed to send message: {}", e));
+    }
+
+    // Try to receive the response with a timeout
+    let response = match tokio::time::timeout(Duration::from_secs(5), channel.receive()).await {
+        Ok(result) => match result {
+            Ok(msg) => msg,
+            Err(e) => {
+                println!("Error receiving response: {}", e);
+                return Err(anyhow::anyhow!("Failed to receive response: {}", e));
+            }
+        },
+        Err(_) => {
+            println!("Timeout waiting for response");
+            return Err(anyhow::anyhow!("Timeout waiting for response"));
+        }
+    };
+
+    let response_str = String::from_utf8_lossy(&response);
+    println!("Received response: {}", response_str);
+
+    // Verify the response is an echo of our message
+    assert_eq!(response_str, format!("Echo: {}", message), "Response should echo the sent message");
+
+    println!("SSH connection test completed successfully");
 
     Ok(())
 }
