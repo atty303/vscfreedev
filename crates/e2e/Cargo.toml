@@ -1,0 +1,12 @@
+[package]
+name = "vscfreedev_e2e"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "fs", "io-util", "time"] }
+anyhow = "1"
+assert_cmd = "2.0"
+predicates = "3.0"
+tempfile = "3.8"
+rand = "0.8"

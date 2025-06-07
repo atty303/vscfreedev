@@ -31,7 +31,7 @@ enum Commands {
         #[arg(short, long)]
         password: Option<String>,
 
-        /// Path to private key for SSH authentication (optional)
+        /// Path to a private key for SSH authentication (optional)
         #[arg(short, long)]
         key_path: Option<PathBuf>,
 
