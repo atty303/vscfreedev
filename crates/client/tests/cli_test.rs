@@ -1,8 +1,10 @@
+mod shared;
+
 use anyhow::Result;
 use assert_cmd::Command;
 use std::time::Duration;
 use tokio::time::sleep;
-use vscfreedev_e2e::docker::RemoteContainer;
+use shared::docker::RemoteContainer;
 
 #[tokio::test]
 async fn test_ssh_connection() -> Result<()> {
