@@ -1,14 +1,11 @@
 [package]
-name = "vscfreedev_client"
+name = "vscfreedev-client"
 version = "0.0.1"
 edition = "2024"
 
 [dependencies]
-vscfreedev_core = { path = "../core" }
-vscfreedev_remote = { path = "../remote" }
+vscfreedev-core = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs", "process"] }
 anyhow = "1"
 thiserror = "2"
 ssh2 = "0.9"
-tempfile = "3"
-bytes = "1"

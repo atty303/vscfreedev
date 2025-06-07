@@ -52,7 +52,7 @@ impl RemoteContainer {
         fs::write(&dockerfile_path, DOCKERFILE).await?;
 
         // Copy the remote server binary to the build context
-        let remote_binary_path = Path::new("target/debug/vscfreedev_remote");
+        let remote_binary_path = Path::new("../../target/x86_64-unknown-linux-gnu/debug/vscfreedev-remote");
         let dest_path = temp_dir.path().join("vscfreedev_remote");
         fs::copy(remote_binary_path, &dest_path)
             .await

@@ -1,8 +1,6 @@
 [package]
-name = "vscfreedev_gui"
+name = "vscfreedev-gui"
 version = "0.0.1"
 edition = "2024"
 
 [dependencies]
-eframe = "0.27"
-vscfreedev_core = { path = "../core" }

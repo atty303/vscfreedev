@@ -1,12 +1,12 @@
 [package]
-name = "vscfreedev"
+name = "vscfreedev-cli"
 version = "0.0.1"
 edition = "2024"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util"] }
-vscfreedev_core = { path = "../core" }
-vscfreedev_client = { path = "../client" }
+vscfreedev-core = { workspace = true }
+vscfreedev-client = { workspace = true }
 anyhow = "1"
 bytes = "1"

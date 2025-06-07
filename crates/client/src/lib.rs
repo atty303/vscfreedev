@@ -1,16 +1,12 @@
 //! Client-side library for vscfreedev
 
 use anyhow::{Context, Result};
-use bytes::Bytes;
-use ssh2::{Channel, Session};
+use ssh2::Session;
 use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{TcpStream};
 use std::path::Path;
 use std::time::Duration;
-use tempfile::NamedTempFile;
-use tokio::fs;
 use tokio::net::TcpStream as TokioTcpStream;
-use tokio::process::Command;
 use tokio::time;
 use vscfreedev_core::message_channel::{ChannelHandle, MessageChannel, Multiplexer};
 
@@ -114,18 +110,8 @@ pub mod client {
 
     /// Build the remote executable
     async fn build_remote_executable() -> Result<String> {
-        // Run cargo build to build the remote executable
-        let status = Command::new("cargo")
-            .args(["build", "--bin", "vscfreedev_remote"])
-            .status()
-            .await?;
-
-        if !status.success() {
-            return Err(anyhow::anyhow!("Failed to build remote executable"));
-        }
-
         // Return the path to the built executable
-        Ok(String::from("target/debug/vscfreedev_remote"))
+        Ok(String::from("../../target/x86_64-unknown-linux-gnu/debug/vscfreedev-remote"))
     }
 
     /// Upload the executable to the remote host

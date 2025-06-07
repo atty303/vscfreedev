@@ -1,12 +1,14 @@
 [package]
-name = "vscfreedev_e2e"
+name = "vscfreedev-e2e"
 version = "0.0.1"
 edition = "2024"
 
 [dependencies]
+vscfreedev-remote = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "fs", "io-util", "time"] }
 anyhow = "1"
 assert_cmd = "2.0"
 predicates = "3.0"
 tempfile = "3.8"
 rand = "0.8"
+cargo_metadata = "0.20"

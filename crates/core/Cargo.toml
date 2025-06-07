@@ -1,6 +1,6 @@
 [package]
-name = "vscfreedev_core"
-version = "0.0.1"
+name = "vscfreedev-core"
+version = { workspace = true }
 edition = "2024"
 
 [dependencies]

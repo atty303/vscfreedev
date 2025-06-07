@@ -6,3 +6,8 @@ resolver = "2"
 edition = "2024"
 version = "0.0.1"
 license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+vscfreedev-core = { path = "crates/core" }
+vscfreedev-remote = { path = "crates/remote" }
+vscfreedev-client = { path = "crates/client" }

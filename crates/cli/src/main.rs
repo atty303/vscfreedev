@@ -16,7 +16,7 @@ enum Commands {
     /// Connect to a remote host via SSH
     Ssh {
         /// Remote host to connect to
-        #[arg(short, long)]
+        #[arg(short = 'H', long)]
         host: String,
 
         /// SSH port
@@ -28,7 +28,7 @@ enum Commands {
         username: String,
 
         /// Password for SSH authentication (optional)
-        #[arg(short, long)]
+        #[arg(short = 'P', long)]
         password: Option<String>,
 
         /// Path to a private key for SSH authentication (optional)

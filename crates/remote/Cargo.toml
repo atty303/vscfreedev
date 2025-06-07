@@ -1,16 +1,15 @@
 [package]
-name = "vscfreedev_remote"
+name = "vscfreedev-remote"
 version = "0.0.1"
 edition = "2024"
 
 [[bin]]
-name = "vscfreedev_remote"
+name = "vscfreedev-remote"
 path = "src/main.rs"
 
 [dependencies]
-vscfreedev_core = { path = "../core" }
+vscfreedev-core = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs"] }
 anyhow = "1"
-thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 bytes = "1"
