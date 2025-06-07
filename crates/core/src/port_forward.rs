@@ -1,1 +1,3 @@
-pub async fn start() -> anyhow::Result<()> { Ok(()) }
+pub async fn start() -> anyhow::Result<()> {
+    Ok(())
+}

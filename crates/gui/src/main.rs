@@ -1,1 +1,3 @@
-fn main(){println!("gui");}
+fn main() {
+    println!("gui");
+}

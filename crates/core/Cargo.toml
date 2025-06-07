@@ -1,9 +1,10 @@
 [package]
 name = "vscfreedev_core"
 version = "0.0.1"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
+bytes = "1"

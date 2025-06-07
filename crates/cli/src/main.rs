@@ -1,1 +1,3 @@
-fn main(){println!("vscfreedev");}
+fn main() {
+    println!("vscfreedev");
+}

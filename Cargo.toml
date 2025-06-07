@@ -3,6 +3,6 @@ members = ["crates/core", "crates/cli", "crates/gui"]
 resolver = "2"
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 version = "0.0.1"
 license = "MIT OR Apache-2.0"
