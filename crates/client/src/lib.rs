@@ -1,7 +1,7 @@
 //! Client-side library for vscfreedev
 
 use anyhow::Result;
-use tracing::{debug, warn, info, error};
+use tracing::{debug, info, error};
 use russh::client::{Config, Handler, Handle, Session, connect, AuthResult};
 use russh::ChannelId;
 use std::path::Path;
@@ -86,10 +86,10 @@ impl Handler for MyHandler {
 
 /// An adapter that implements AsyncRead and AsyncWrite for a russh channel
 pub struct SshChannelAdapter {
-    handle: Arc<Mutex<Handle<MyHandler>>>,
+    handle: Handle<MyHandler>,
     channel_id: ChannelId,
-    read_rx: Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>,
-    read_buf: Arc<Mutex<Vec<u8>>>,
+    read_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    read_buf: Vec<u8>,
 }
 
 impl SshChannelAdapter {
@@ -100,60 +100,50 @@ impl SshChannelAdapter {
         read_rx: mpsc::UnboundedReceiver<Vec<u8>>,
     ) -> Self {
         Self {
-            handle: Arc::new(Mutex::new(handle)),
+            handle,
             channel_id,
-            read_rx: Arc::new(Mutex::new(read_rx)),
-            read_buf: Arc::new(Mutex::new(Vec::new())),
+            read_rx,
+            read_buf: Vec::new(),
         }
     }
 }
 
 impl AsyncRead for SshChannelAdapter {
     fn poll_read(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         _cx: &mut TaskContext<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        // Try to get data from our buffer first
-        if let Ok(mut buffer_guard) = self.read_buf.try_lock() {
-            if !buffer_guard.is_empty() {
-                let to_copy = std::cmp::min(buf.remaining(), buffer_guard.len());
-                let data = buffer_guard.drain(..to_copy).collect::<Vec<u8>>();
-                buf.put_slice(&data);
-                debug!("SshChannelAdapter::poll_read returned {} bytes from buffer", to_copy);
-                return Poll::Ready(Ok(()));
-            }
+        // Try to read from our internal buffer first
+        if !self.read_buf.is_empty() {
+            let to_copy = std::cmp::min(buf.remaining(), self.read_buf.len());
+            let data = self.read_buf.drain(..to_copy).collect::<Vec<u8>>();
+            buf.put_slice(&data);
+            debug!("SshChannelAdapter::poll_read returned {} bytes from buffer", to_copy);
+            return Poll::Ready(Ok(()));
         }
 
-        // Try to receive new data
-        if let Ok(mut rx_guard) = self.read_rx.try_lock() {
-            match rx_guard.try_recv() {
-                Ok(data) => {
-                    debug!("SshChannelAdapter::poll_read got {} bytes", data.len());
-                    let to_copy = std::cmp::min(buf.remaining(), data.len());
-                    buf.put_slice(&data[..to_copy]);
-                    
-                    // Store remainder in buffer if any
-                    if to_copy < data.len() {
-                        if let Ok(mut buffer_guard) = self.read_buf.try_lock() {
-                            *buffer_guard = data[to_copy..].to_vec();
-                        }
-                    }
-                    
-                    debug!("SshChannelAdapter::poll_read returned {} bytes", to_copy);
-                    return Poll::Ready(Ok(()));
+        // Try to receive new data from channel
+        match self.read_rx.try_recv() {
+            Ok(data) => {
+                debug!("SshChannelAdapter::poll_read got {} bytes", data.len());
+                let to_copy = std::cmp::min(buf.remaining(), data.len());
+                buf.put_slice(&data[..to_copy]);
+                
+                // Store remainder in buffer if any
+                if to_copy < data.len() {
+                    self.read_buf.extend_from_slice(&data[to_copy..]);
                 }
-                Err(mpsc::error::TryRecvError::Empty) => {
-                    return Poll::Pending;
-                }
-                Err(mpsc::error::TryRecvError::Disconnected) => {
-                    warn!("SshChannelAdapter::poll_read channel disconnected");
-                    return Poll::Ready(Ok(()));
-                }
+                
+                debug!("SshChannelAdapter::poll_read returned {} bytes", to_copy);
+                Poll::Ready(Ok(()))
+            }
+            Err(mpsc::error::TryRecvError::Empty) => Poll::Pending,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                debug!("SshChannelAdapter::poll_read channel closed");
+                Poll::Ready(Ok(()))
             }
         }
-
-        Poll::Pending
     }
 }
 
@@ -164,48 +154,32 @@ impl AsyncWrite for SshChannelAdapter {
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         debug!("SshChannelAdapter::poll_write called with {} bytes", buf.len());
-        debug!("SshChannelAdapter::poll_write data: {}", String::from_utf8_lossy(buf));
         
-        let handle = self.handle.clone();
-        let channel_id = self.channel_id;
-        let data = buf.to_vec();
+        // Create future to send data
+        let send_fut = self.handle.data(self.channel_id, buf.to_vec().into());
+        tokio::pin!(send_fut);
 
-        // Use futures::task::noop_waker to avoid borrowing issues
-        let waker = futures::task::noop_waker();
-        let mut context = std::task::Context::from_waker(&waker);
-
-        // Attempt to send data immediately
-        tokio::pin! {
-            let send_fut = async move {
-                let handle_guard = handle.lock().await;
-                handle_guard.data(channel_id, data.clone().into()).await
-                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "SSH data send failed"))
-            };
-        }
-
-        match send_fut.poll(&mut context) {
+        match send_fut.poll(cx) {
             Poll::Ready(Ok(_)) => {
                 debug!("SshChannelAdapter::poll_write sent {} bytes successfully", buf.len());
                 Poll::Ready(Ok(buf.len()))
             }
             Poll::Ready(Err(e)) => {
-                error!("SshChannelAdapter::poll_write error: {}", e);
-                Poll::Ready(Err(e))
+                error!("SshChannelAdapter::poll_write error: {:?}", e);
+                Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    format!("SSH data send failed: {:?}", e)
+                )))
             }
-            Poll::Pending => {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            }
+            Poll::Pending => Poll::Pending,
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
-        debug!("SshChannelAdapter::poll_flush called");
         Poll::Ready(Ok(()))
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
-        debug!("SshChannelAdapter::poll_shutdown called");
         Poll::Ready(Ok(()))
     }
 }
