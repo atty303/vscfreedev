@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
             println!("Connecting to {}:{} as {}", host, port, username);
 
             // Connect to the remote host via SSH
-            let (mut channel, welcome_already_received) = client::connect_ssh(
+            let mut channel = client::connect_ssh(
                 host,
                 *port,
                 username,
@@ -67,14 +67,6 @@ async fn main() -> Result<()> {
             .await?;
 
             println!("Connected to remote host");
-
-            // Receive the welcome message if not already received
-            if !welcome_already_received {
-                let welcome = channel.receive().await?;
-                println!("Received: {}", String::from_utf8_lossy(&welcome));
-            } else {
-                println!("Welcome message already received during connection");
-            }
 
             // Send a message
             println!("Sending message: {}", message);

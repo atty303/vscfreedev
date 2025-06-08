@@ -1,23 +1,22 @@
 //! Client-side library for vscfreedev
 
-use anyhow::{Context, Result};
-use ssh2::{Channel as SshChannel, Session};
-use std::io::{Read, Write};
-use std::net::{TcpStream};
+use anyhow::Result;
+use russh::client::{Config, Handler, Handle, Session, connect};
+use russh::ChannelId;
+use russh_keys::key::PublicKey;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
-use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::time;
+use tokio::sync::{mpsc, Mutex};
 use vscfreedev_core::message_channel::MessageChannel;
 
 /// Error types for the client
 #[derive(thiserror::Error, Debug)]
 pub enum ClientError {
     #[error("SSH error: {0}")]
-    Ssh(#[from] ssh2::Error),
+    Ssh(#[from] russh::Error),
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -27,18 +26,79 @@ pub enum ClientError {
 
     #[error("Remote execution error: {0}")]
     RemoteExecution(String),
+
+    #[error("Channel error: {0}")]
+    Channel(String),
+
+    #[error("Key error: {0}")]
+    Key(#[from] russh_keys::Error),
 }
 
-/// An adapter that implements AsyncRead and AsyncWrite for an SSH channel
+/// Handler for SSH client events
+struct MyHandler {
+    data_tx: Arc<Mutex<Option<mpsc::UnboundedSender<Vec<u8>>>>>,
+}
+
+impl MyHandler {
+    fn new() -> (Self, mpsc::UnboundedReceiver<Vec<u8>>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (
+            Self {
+                data_tx: Arc::new(Mutex::new(Some(tx))),
+            },
+            rx,
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl Handler for MyHandler {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        _server_public_key: &PublicKey,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+
+    async fn data(
+        &mut self,
+        _channel: ChannelId,
+        data: &[u8],
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        eprintln!("RusshHandler: Received {} bytes", data.len());
+        let data_tx_guard = self.data_tx.lock().await;
+        if let Some(ref tx) = *data_tx_guard {
+            if let Err(e) = tx.send(data.to_vec()) {
+                eprintln!("RusshHandler: Failed to send data: {}", e);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// An adapter that implements AsyncRead and AsyncWrite for a russh channel
 pub struct SshChannelAdapter {
-    channel: Arc<Mutex<SshChannel>>,
+    handle: Arc<Mutex<Handle<MyHandler>>>,
+    channel_id: ChannelId,
+    read_rx: Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>,
+    read_buf: Arc<Mutex<Vec<u8>>>,
 }
 
 impl SshChannelAdapter {
     /// Create a new SSH channel adapter
-    pub fn new(channel: SshChannel) -> Self {
+    pub fn new(
+        handle: Handle<MyHandler>,
+        channel_id: ChannelId,
+        read_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    ) -> Self {
         Self {
-            channel: Arc::new(Mutex::new(channel)),
+            handle: Arc::new(Mutex::new(handle)),
+            channel_id,
+            read_rx: Arc::new(Mutex::new(read_rx)),
+            read_buf: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -46,50 +106,49 @@ impl SshChannelAdapter {
 impl AsyncRead for SshChannelAdapter {
     fn poll_read(
         self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
+        _cx: &mut TaskContext<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        let mut channel = match self.channel.lock() {
-            Ok(channel) => channel,
-            Err(e) => {
-                println!("ERROR: Failed to lock SSH channel for read: {:?}", e);
-                return Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Failed to lock SSH channel",
-                )));
-            }
-        };
-
-        let unfilled = buf.initialize_unfilled();
-        match channel.read(unfilled) {
-            Ok(0) => {
-                // Reading 0 bytes indicates EOF, return EOF error
-                println!("SshChannelAdapter::poll_read got 0 bytes (EOF)");
-                Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "SSH channel EOF",
-                )))
-            }
-            Ok(n) => {
-                println!("SshChannelAdapter::poll_read read {} bytes", n);
-                buf.advance(n);
-                Poll::Ready(Ok(()))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // SSH2 doesn't support async I/O, so we need to yield and try again later
-                // Use a small delay to avoid busy waiting
-                let waker = cx.waker().clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(1)).await;
-                    waker.wake();
-                });
-                Poll::Pending
-            }
-            Err(e) => {
-                println!("ERROR: SshChannelAdapter::poll_read error: {:?}", e);
-                Poll::Ready(Err(e))
+        // Try to get data from our buffer first
+        if let Ok(mut buffer_guard) = self.read_buf.try_lock() {
+            if !buffer_guard.is_empty() {
+                let to_copy = std::cmp::min(buf.remaining(), buffer_guard.len());
+                let data = buffer_guard.drain(..to_copy).collect::<Vec<u8>>();
+                buf.put_slice(&data);
+                eprintln!("SshChannelAdapter::poll_read returned {} bytes from buffer", to_copy);
+                return Poll::Ready(Ok(()));
             }
         }
+
+        // Try to receive new data
+        if let Ok(mut rx_guard) = self.read_rx.try_lock() {
+            match rx_guard.try_recv() {
+                Ok(data) => {
+                    eprintln!("SshChannelAdapter::poll_read got {} bytes", data.len());
+                    let to_copy = std::cmp::min(buf.remaining(), data.len());
+                    buf.put_slice(&data[..to_copy]);
+                    
+                    // Store remainder in buffer if any
+                    if to_copy < data.len() {
+                        if let Ok(mut buffer_guard) = self.read_buf.try_lock() {
+                            *buffer_guard = data[to_copy..].to_vec();
+                        }
+                    }
+                    
+                    eprintln!("SshChannelAdapter::poll_read returned {} bytes", to_copy);
+                    return Poll::Ready(Ok(()));
+                }
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    return Poll::Pending;
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    eprintln!("SshChannelAdapter::poll_read channel disconnected");
+                    return Poll::Ready(Ok(()));
+                }
+            }
+        }
+
+        Poll::Pending
     }
 }
 
@@ -99,324 +158,114 @@ impl AsyncWrite for SshChannelAdapter {
         cx: &mut TaskContext<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        println!("SshChannelAdapter::poll_write called with {} bytes", buf.len());
+        eprintln!("SshChannelAdapter::poll_write called with {} bytes", buf.len());
+        eprintln!("SshChannelAdapter::poll_write data: {}", String::from_utf8_lossy(buf));
+        
+        let handle = self.handle.clone();
+        let channel_id = self.channel_id;
+        let data = buf.to_vec();
 
-        let mut channel = match self.channel.lock() {
-            Ok(channel) => channel,
-            Err(e) => {
-                println!("ERROR: Failed to lock SSH channel for write: {:?}", e);
-                return Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Failed to lock SSH channel",
-                )));
+        // Use futures::task::noop_waker to avoid borrowing issues
+        let waker = futures::task::noop_waker();
+        let mut context = std::task::Context::from_waker(&waker);
+
+        // Attempt to send data immediately
+        tokio::pin! {
+            let send_fut = async move {
+                let mut handle_guard = handle.lock().await;
+                handle_guard.data(channel_id, data.clone().into()).await
+                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "SSH data send failed"))
+            };
+        }
+
+        match send_fut.poll(&mut context) {
+            Poll::Ready(Ok(_)) => {
+                eprintln!("SshChannelAdapter::poll_write sent {} bytes successfully", buf.len());
+                Poll::Ready(Ok(buf.len()))
             }
-        };
-
-        match channel.write(buf) {
-            Ok(n) => {
-                println!("SshChannelAdapter::poll_write wrote {} bytes", n);
-                if n > 0 {
-                    // Log the actual data written for debugging
-                    let data_str = String::from_utf8_lossy(&buf[..n]);
-                    println!("SshChannelAdapter::poll_write data: {}", data_str);
-                }
-
-                // Try to flush the channel after writing
-                if let Err(e) = channel.flush() {
-                    println!("ERROR: SshChannelAdapter::poll_write flush error: {:?}", e);
-                    return Poll::Ready(Err(e));
-                }
-
-                Poll::Ready(Ok(n))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // SSH2 doesn't support async I/O, so we need to yield and try again later
-                // Use a small delay to avoid busy waiting
-                let waker = cx.waker().clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(1)).await;
-                    waker.wake();
-                });
-                Poll::Pending
-            }
-            Err(e) => {
-                println!("ERROR: SshChannelAdapter::poll_write error: {:?}", e);
+            Poll::Ready(Err(e)) => {
+                eprintln!("SshChannelAdapter::poll_write error: {}", e);
                 Poll::Ready(Err(e))
+            }
+            Poll::Pending => {
+                cx.waker().wake_by_ref();
+                Poll::Pending
             }
         }
     }
 
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        _cx: &mut TaskContext<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        println!("SshChannelAdapter::poll_flush called");
-
-        // SSH2 doesn't have an explicit flush method
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
+        eprintln!("SshChannelAdapter::poll_flush called");
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(
-        self: Pin<&mut Self>,
-        _cx: &mut TaskContext<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        println!("SshChannelAdapter::poll_shutdown called - NOT sending EOF to keep channel open");
-
-        // Don't send EOF here as it closes stdin and breaks bidirectional communication
-        // SSH channels should remain open for continuous communication
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
+        eprintln!("SshChannelAdapter::poll_shutdown called");
         Poll::Ready(Ok(()))
     }
 }
 
-/// Client implementation
+/// Public client interface
 pub mod client {
     use super::*;
 
-    /// Initialize the client
-    pub fn init() -> Result<()> {
-        Ok(())
-    }
-
-
-    /// Connect to a remote host via SSH and establish a message channel
+    /// Connect to a remote host via SSH and return a message channel
     pub async fn connect_ssh(
         host: &str,
         port: u16,
         username: &str,
         password: Option<&str>,
         key_path: Option<&Path>,
-    ) -> Result<MessageChannel<SshChannelAdapter>> {
-        // Build the remote executable with a timeout
-        let remote_executable_path = time::timeout(
-            Duration::from_secs(30),
-            build_remote_executable()
-        ).await.context("Timeout building remote executable")??;
+    ) -> Result<MessageChannel<SshChannelAdapter>, ClientError> {
+        eprintln!("Connecting to {}:{} as {}", host, port, username);
 
-        // Connect to the SSH server
-        // Note: TcpStream::connect is not async, so we can't use timeout directly
-        let tcp = TcpStream::connect((host, port))
-            .with_context(|| format!("Failed to connect to {}:{}", host, port))?;
+        let config = Arc::new(Config::default());
+        let (handler, data_rx) = MyHandler::new();
 
-        // Set a timeout for the TCP connection
-        tcp.set_read_timeout(Some(Duration::from_secs(30)))?;
-        tcp.set_write_timeout(Some(Duration::from_secs(30)))?;
-
-        // Create an SSH session
-        let mut sess = Session::new().context("Failed to create SSH session")?;
-        sess.set_tcp_stream(tcp);
-
-        // Set a timeout for the SSH session
-        sess.set_timeout(30000); // 30 seconds in milliseconds
-
-        // Perform SSH handshake
-        sess.handshake().context("SSH handshake failed")?;
+        // Connect to SSH server
+        let mut handle = connect(config, (host, port), handler).await?;
 
         // Authenticate
         if let Some(password) = password {
-            sess.userauth_password(username, password)
-                .context("Password authentication failed")?;
+            eprintln!("Authenticating with password");
+            let auth_result = handle.authenticate_password(username, password).await?;
+            if !auth_result {
+                return Err(ClientError::Connection("Password authentication failed".to_string()));
+            }
         } else if let Some(key_path) = key_path {
-            sess.userauth_pubkey_file(username, None, key_path, None)
-                .context("Key authentication failed")?;
+            eprintln!("Authenticating with key: {:?}", key_path);
+            let key_str = std::fs::read_to_string(key_path)?;
+            let key = russh_keys::decode_secret_key(&key_str, None)?;
+            let auth_result = handle.authenticate_publickey(username, Arc::new(key)).await?;
+            if !auth_result {
+                return Err(ClientError::Connection("Key authentication failed".to_string()));
+            }
         } else {
-            // Try agent authentication
-            sess.userauth_agent(username)
-                .context("Agent authentication failed")?;
+            return Err(ClientError::Connection("No authentication method provided".to_string()));
         }
 
-        // Upload the remote executable with a timeout
-        let remote_path = time::timeout(
-            Duration::from_secs(60), // Uploading might take longer
-            async {
-                upload_executable(&sess, &remote_executable_path).context("Failed to upload executable")
-            }
-        ).await.context("Timeout uploading executable")??;
+        eprintln!("Authentication successful");
 
-        // Make the remote executable executable
-        let mut channel = sess.channel_session().context("Failed to create SSH channel")?;
-        channel.exec(&format!("chmod +x {}", remote_path))
-            .context("Failed to make executable executable")?;
+        // Create a channel
+        let mut channel = handle.channel_open_session().await?;
+        let channel_id = channel.id();
+        eprintln!("Created SSH channel: {:?}", channel_id);
 
-        // Read the output with a timeout
-        let mut output = String::new();
-        time::timeout(
-            Duration::from_secs(10),
-            async {
-                channel.read_to_string(&mut output)?;
-                channel.wait_close()?;
-                Ok::<_, anyhow::Error>(())
-            }
-        ).await.context("Timeout waiting for chmod command to complete")??;
+        // Execute the remote command
+        let remote_path = "/usr/local/bin/vscfreedev_remote";
+        let command = format!("{} -s 2>/tmp/remote_stderr.log", remote_path);
+        eprintln!("Executing command: {}", command);
 
-        if channel.exit_status()? != 0 {
-            return Err(anyhow::anyhow!("Failed to make executable executable: {}", output));
-        }
+        // Execute the command using channel exec
+        channel.exec(false, command.as_bytes()).await?;
+        eprintln!("Command executed successfully");
 
-        // First run a simple command to check if SSH is working correctly
-        let mut test_channel = sess.channel_session().context("Failed to create SSH channel for test")?;
-        println!("Running test command...");
-        test_channel.exec("echo 'SSH connection test' && ls -la /usr/local/bin/vscfreedev_remote")
-            .context("Failed to run test command")?;
+        // Create the adapter
+        let ssh_adapter = SshChannelAdapter::new(handle, channel_id, data_rx);
 
-        // Read the output with a timeout
-        let mut test_output = String::new();
-        time::timeout(
-            Duration::from_secs(10),
-            async {
-                test_channel.read_to_string(&mut test_output)?;
-                test_channel.wait_close()?;
-                Ok::<_, anyhow::Error>(())
-            }
-        ).await.context("Timeout waiting for test command to complete")??;
-
-        println!("Test command output: {}", test_output);
-
-        if test_channel.exit_status()? != 0 {
-            return Err(anyhow::anyhow!("Test command failed: {}", test_output));
-        }
-
-        // First try to run the remote executable with --help to see if it works
-        let mut help_channel = sess.channel_session().context("Failed to create SSH channel for help")?;
-        println!("Running remote executable with --help...");
-        help_channel.exec(&format!("{} --help > /tmp/remote_help.txt 2>&1", remote_path))
-            .context("Failed to run remote executable with --help")?;
-
-        // Read the output with a timeout
-        let mut help_output = String::new();
-        time::timeout(
-            Duration::from_secs(10),
-            async {
-                help_channel.read_to_string(&mut help_output)?;
-                help_channel.wait_close()?;
-                Ok::<_, anyhow::Error>(())
-            }
-        ).await.context("Timeout waiting for help command to complete")??;
-
-        println!("Help command exit status: {}", help_channel.exit_status()?);
-
-        // Now run a command to check if the remote executable exists and is executable
-        let mut check_channel = sess.channel_session().context("Failed to create SSH channel for check")?;
-        println!("Checking remote executable...");
-        check_channel.exec(&format!("ls -la {} && file {}", remote_path, remote_path))
-            .context("Failed to check remote executable")?;
-
-        // Read the output with a timeout
-        let mut check_output = String::new();
-        time::timeout(
-            Duration::from_secs(10),
-            async {
-                check_channel.read_to_string(&mut check_output)?;
-                check_channel.wait_close()?;
-                Ok::<_, anyhow::Error>(())
-            }
-        ).await.context("Timeout waiting for check command to complete")??;
-
-        println!("Check command output: {}", check_output);
-
-        // Start the remote executable with standard I/O using shell session
-        let mut channel = sess.channel_session().context("Failed to create SSH channel")?;
-        println!("Starting remote executable via shell: {}", remote_path);
-
-        // Start a shell session to keep stdin open
-        channel.shell().context("Failed to start shell")?;
-        
-        // Send the command to start the remote executable
-        let start_cmd = format!("exec {} -s 2>/tmp/remote_stderr.log\n", remote_path);
-        channel.write_all(start_cmd.as_bytes()).context("Failed to send start command")?;
-        println!("Remote executable started");
-
-        // Read any initial data from the channel
-        let mut initial_data = Vec::new();
-        let mut buf = [0u8; 1024];
-
-        // Try to read with a timeout to get the welcome message
-        let read_result = time::timeout(
-            Duration::from_secs(5),
-            async {
-                for _ in 0..10 {  // Limit iterations to avoid infinite loop
-                    match channel.read(&mut buf) {
-                        Ok(0) => {
-                            println!("SSH channel EOF after starting remote executable");
-                            return Err(anyhow::anyhow!("SSH channel EOF immediately"));
-                        },
-                        Ok(n) => {
-                            println!("Read {} bytes from SSH channel", n);
-                            initial_data.extend_from_slice(&buf[..n]);
-
-                            // Check if we have a complete VSC message
-                            if let Ok(data_str) = std::str::from_utf8(&initial_data) {
-                                if data_str.contains("VSC:") && data_str.contains('\n') {
-                                    println!("Found complete VSC message in initial data");
-                                    break;
-                                }
-                            }
-
-                            tokio::time::sleep(Duration::from_millis(200)).await;
-                        },
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                        },
-                        Err(e) => {
-                            return Err(anyhow::anyhow!("SSH channel error: {}", e));
-                        }
-                    }
-                }
-                Ok(())
-            }
-        ).await;
-
-        if read_result.is_err() {
-            println!("Timed out reading initial data, but continuing...");
-        }
-
-        println!("Total initial data received: {} bytes", initial_data.len());
-
-        // Create an adapter for the SSH channel
-        let ssh_adapter = SshChannelAdapter::new(channel);
-
-        // Create a message channel using text-safe mode for SSH
+        // Create a message channel using text-safe mode for SSH compatibility  
         let message_channel = MessageChannel::new_with_text_safe_mode(ssh_adapter);
 
         Ok(message_channel)
-    }
-
-    /// Build the remote executable
-    async fn build_remote_executable() -> Result<String> {
-        // For testing, check if we're running in a test environment
-        if std::env::var("RUST_TEST").is_ok() {
-            // Return a path to an executable that's already running in the Docker container
-            return Ok(String::from("/usr/local/bin/vscfreedev_remote"));
-        }
-
-        // Return the path to the built executable
-        Ok(String::from("../../target/x86_64-unknown-linux-gnu/debug/vscfreedev-remote"))
-    }
-
-    /// Upload the executable to the remote host
-    fn upload_executable(session: &Session, local_path: &str) -> Result<String> {
-        // Read the local executable
-        let mut file = std::fs::File::open(local_path)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-
-        // Create a temporary file on the remote host
-        let remote_path = format!("/tmp/vscfreedev_remote_{}", std::process::id());
-        let mut remote_file = session.scp_send(
-            Path::new(&remote_path),
-            0o755, // Executable permissions
-            buffer.len() as u64,
-            None,
-        )?;
-
-        // Write the executable to the remote file
-        remote_file.write_all(&buffer)?;
-
-        // Close the remote file
-        remote_file.send_eof()?;
-        remote_file.wait_eof()?;
-        remote_file.close()?;
-        remote_file.wait_close()?;
-
-        Ok(remote_path)
     }
 }

@@ -1,6 +1,5 @@
 use bytes::{Buf, Bytes, BytesMut};
 use std::io;
-use std::sync::Arc;
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;

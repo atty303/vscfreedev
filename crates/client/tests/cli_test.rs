@@ -28,19 +28,32 @@ async fn test_ssh_connection() -> Result<()> {
 
     println!("Connected to remote host");
 
-    // Send a message
+    // Test the simple line-based approach by connecting to SSH manually
     let message = "Hello from E2E test!";
     println!("Sending message: {}", message);
-    if let Err(e) = message_channel.send(Bytes::from(message)).await {
-        println!("Error sending message: {}", e);
-        return Err(anyhow::anyhow!("Failed to send message: {}", e));
+    
+    // Create a simple line message
+    let line_message = format!("{}\n", message);
+    
+    // Send message using MessageChannel (which will fail as expected, but let's see the logs)
+    if let Err(e) = message_channel.send(Bytes::from(line_message)).await {
+        println!("MessageChannel send failed as expected: {}", e);
+        
+        // Get and display container logs for debugging
+        println!("---- Remote container logs ----");
+        match container.get_logs().await {
+            Ok(logs) => println!("{}", logs),
+            Err(log_err) => println!("Error getting container logs: {}", log_err),
+        }
+        println!("---- End of remote container logs ----");
+        
+        return Err(anyhow::anyhow!("MessageChannel failed: {}", e));
     }
 
-    // Add a small delay to allow the message to be fully sent
+    // Add a small delay 
     sleep(Duration::from_secs(1)).await;
 
-    // Try to receive the response with a timeout
-    let response = match tokio::time::timeout(Duration::from_secs(20), message_channel.receive()).await {
+    let response = match tokio::time::timeout(Duration::from_secs(5), message_channel.receive()).await {
         Ok(result) => match result {
             Ok(msg) => msg,
             Err(e) => {

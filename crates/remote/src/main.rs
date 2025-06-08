@@ -1,4 +1,5 @@
 use anyhow::Result;
+use base64::{Engine as _, engine::general_purpose};
 use clap::Parser;
 use std::io::{self, Read, Write};
 use std::pin::Pin;
@@ -6,6 +7,55 @@ use std::task::{Context, Poll, Waker};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use vscfreedev_core::message_channel::MessageChannel;
+
+/// A simple async stdio adapter using tokio's async stdin/stdout
+struct AsyncStdio {
+    stdin: tokio::io::Stdin,
+    stdout: tokio::io::Stdout,
+}
+
+impl AsyncStdio {
+    fn new() -> Self {
+        Self {
+            stdin: tokio::io::stdin(),
+            stdout: tokio::io::stdout(),
+        }
+    }
+}
+
+impl AsyncRead for AsyncStdio {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stdin).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for AsyncStdio {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.stdout).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stdout).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stdout).poll_shutdown(cx)
+    }
+}
 
 /// An adapter that implements AsyncRead and AsyncWrite for standard input and output
 struct StdioAdapter {
@@ -32,16 +82,34 @@ impl StdioAdapter {
 
         // Spawn a thread to read from stdin
         std::thread::spawn(move || {
+            eprintln!("REMOTE_SERVER_LOG: StdioAdapter stdin thread starting");
+            
+            // Set stdin to non-blocking mode for better SSH exec compatibility
+            #[cfg(unix)]
+            {
+                use std::os::unix::io::AsRawFd;
+                let fd = io::stdin().as_raw_fd();
+                unsafe {
+                    let flags = libc::fcntl(fd, libc::F_GETFL);
+                    libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+                }
+            }
+            
             let mut stdin = io::stdin();
             let mut buffer = [0u8; 1024];
+            let mut loop_count = 0;
 
             loop {
+                loop_count += 1;
+                eprintln!("REMOTE_SERVER_LOG: StdioAdapter stdin thread loop {}", loop_count);
+                
                 // Read from stdin
+                eprintln!("REMOTE_SERVER_LOG: About to call stdin.read()");
                 match stdin.read(&mut buffer) {
                     Ok(0) => {
-                        // EOF - but don't exit, SSH might send more data later
-                        eprintln!("REMOTE_SERVER_LOG: StdioAdapter read thread: EOF from stdin, waiting...");
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        // EOF - in SSH exec mode, this might be temporary
+                        eprintln!("REMOTE_SERVER_LOG: StdioAdapter read thread: EOF from stdin, retrying...");
+                        std::thread::sleep(std::time::Duration::from_millis(10));
                         continue;
                     }
                     Ok(n) => {
@@ -54,6 +122,7 @@ impl StdioAdapter {
                     }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                         // No data available, sleep and try again
+                        eprintln!("REMOTE_SERVER_LOG: stdin.read() returned WouldBlock, sleeping...");
                         std::thread::sleep(std::time::Duration::from_millis(10));
                         continue;
                     }
@@ -379,8 +448,8 @@ async fn main() -> Result<()> {
         eprintln!("REMOTE_SERVER_ERROR: Failed to write to startup file");
     }
 
-    // Also write to stdout for visibility in SSH output
-    println!("REMOTE_SERVER_STARTUP: Remote server process starting");
+    // Log startup to stderr for better visibility in SSH logs
+    eprintln!("REMOTE_SERVER_STARTUP: Remote server process starting");
 
     // Try to log any panics to stderr
     std::panic::set_hook(Box::new(|panic_info| {
@@ -406,16 +475,14 @@ async fn main() -> Result<()> {
 
     // Log startup to stderr for better visibility in SSH logs
     if args.stdio {
-        println!("Starting vscfreedev remote server using standard I/O");
+        eprintln!("Starting vscfreedev remote server using standard I/O");
     } else {
-        println!("Starting vscfreedev remote server using TCP on port {}", args.port);
+        eprintln!("Starting vscfreedev remote server using TCP on port {}", args.port);
     }
 
     if args.stdio {
-        // Create a stdio adapter
-        let stdio_adapter = StdioAdapter::new();
-        let mut message_channel = MessageChannel::new_with_text_safe_mode(stdio_adapter);
-        handle_messages(&mut message_channel).await?;
+        // For SSH exec mode, use simple line-based I/O that works reliably
+        handle_ssh_stdio().await?;
     } else {
         // Create a TCP listener
         let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
@@ -430,13 +497,15 @@ async fn main() -> Result<()> {
 async fn handle_messages<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
     message_channel: &mut MessageChannel<T>
 ) -> Result<()> {
-    loop {
-        println!("Waiting for message...");
-        eprintln!("REMOTE_SERVER_LOG: Waiting for message...");
+    eprintln!("REMOTE_SERVER_LOG: handle_messages starting");
+    
+    for i in 0..10 {  // Limit iterations to avoid infinite hang
+        println!("Waiting for message... (iteration {})", i);
+        eprintln!("REMOTE_SERVER_LOG: Waiting for message... (iteration {})", i);
 
-        eprintln!("REMOTE_SERVER_LOG: Calling message_channel.receive()");
-        match message_channel.receive().await {
-            Ok(message) => {
+        eprintln!("REMOTE_SERVER_LOG: About to call message_channel.receive()");
+        match tokio::time::timeout(std::time::Duration::from_secs(10), message_channel.receive()).await {
+            Ok(Ok(message)) => {
                 eprintln!("REMOTE_SERVER_LOG: Message received successfully");
                 let message_str = String::from_utf8_lossy(&message);
                 println!("Received message: {}", message_str);
@@ -455,12 +524,92 @@ async fn handle_messages<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
                     }
                 }
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 eprintln!("REMOTE_SERVER_ERROR: Error receiving message: {}", e);
+                break;
+            }
+            Err(_timeout) => {
+                eprintln!("REMOTE_SERVER_ERROR: Timeout waiting for message");
                 break;
             }
         }
     }
 
+    Ok(())
+}
+
+/// Synchronous line-based handler for SSH exec mode compatibility
+async fn handle_ssh_stdio() -> Result<()> {
+    eprintln!("REMOTE_SERVER_LOG: handle_ssh_stdio starting with sync I/O");
+    
+    // Use blocking I/O in a spawn_blocking for SSH exec compatibility
+    tokio::task::spawn_blocking(|| {
+        use std::io::{BufRead, BufReader, Write};
+        
+        let stdin = std::io::stdin();
+        let mut stdout = std::io::stdout();
+        let reader = BufReader::new(stdin);
+        
+        eprintln!("REMOTE_SERVER_LOG: Starting to read lines from stdin (sync)");
+        
+        for (i, line_result) in reader.lines().enumerate() {
+            if i >= 10 { break; } // Limit iterations
+            
+            eprintln!("REMOTE_SERVER_LOG: Reading line... (iteration {})", i);
+            
+            match line_result {
+                Ok(line) => {
+                    let trimmed = line.trim();
+                    eprintln!("REMOTE_SERVER_LOG: Received line: {:?}", trimmed);
+                    
+                    if !trimmed.is_empty() {
+                        // Parse VSC protocol message
+                        if trimmed.starts_with("VSC:") && trimmed.len() > 8 {
+                            let length_str = &trimmed[4..8];
+                            let encoded_data = &trimmed[8..];
+                            
+                            eprintln!("REMOTE_SERVER_LOG: Parsing VSC message - length:{}, data:{}", length_str, encoded_data);
+                            
+                            if let Ok(decoded_bytes) = general_purpose::STANDARD.decode(encoded_data) {
+                                if let Ok(decoded_str) = String::from_utf8(decoded_bytes.clone()) {
+                                    let response = format!("Echo: {}", decoded_str.trim());
+                                    eprintln!("REMOTE_SERVER_LOG: Sending response: {:?}", response);
+                                    
+                                    // Format as VSC protocol message  
+                                    let response_bytes = response.as_bytes();
+                                    let encoded_response = general_purpose::STANDARD.encode(response_bytes);
+                                    let protocol_msg = format!("VSC:{:04X}{}\n", response_bytes.len(), encoded_response);
+                                    eprintln!("REMOTE_SERVER_LOG: Sending protocol message: {:?}", protocol_msg.trim());
+                                    
+                                    if let Err(e) = stdout.write_all(protocol_msg.as_bytes()) {
+                                        eprintln!("REMOTE_SERVER_ERROR: Error writing response: {}", e);
+                                        break;
+                                    }
+                                    if let Err(e) = stdout.flush() {
+                                        eprintln!("REMOTE_SERVER_ERROR: Error flushing: {}", e);
+                                        break;
+                                    }
+                                    eprintln!("REMOTE_SERVER_LOG: Response sent successfully");
+                                } else {
+                                    eprintln!("REMOTE_SERVER_ERROR: Failed to decode UTF-8: {:?}", decoded_bytes);
+                                }
+                            } else {
+                                eprintln!("REMOTE_SERVER_ERROR: Failed to decode base64: {}", encoded_data);
+                            }
+                        } else {
+                            eprintln!("REMOTE_SERVER_ERROR: Invalid VSC protocol format: {}", trimmed);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("REMOTE_SERVER_ERROR: Error reading line: {}", e);
+                    break;
+                }
+            }
+        }
+        
+        eprintln!("REMOTE_SERVER_LOG: handle_ssh_stdio finished");
+    }).await.map_err(|e| anyhow::anyhow!("Spawn blocking failed: {}", e))?;
+    
     Ok(())
 }
