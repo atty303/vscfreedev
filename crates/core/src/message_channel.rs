@@ -34,18 +34,36 @@ pub struct Message {
     pub payload: Bytes,
 }
 
-/// A bidirectional message channel over a TCP connection
+/// Transport mode for the message channel
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TransportMode {
+    /// Raw binary mode for TCP connections
+    Binary,
+    /// Base64 text mode for SSH and other text-based transports
+    TextSafe,
+}
+
+/// A bidirectional message channel over various transports
 ///
 /// This channel allows multiplexing different protocols (SSH, HTTP, etc.)
-/// over a single TCP connection with minimal overhead.
+/// over a single connection with transport-appropriate encoding.
 ///
-/// The wire format is:
+/// Binary mode wire format:
 /// - 1 byte: channel ID
 /// - 2 bytes: payload length (big endian)
 /// - N bytes: payload
+///
+/// Text-safe mode wire format:
+/// - "VSC:" prefix
+/// - 2 hex chars: channel ID
+/// - 4 hex chars: payload length
+/// - Base64 encoded payload
+/// - "\n" suffix
 pub struct MessageChannel<T> {
     inner: T,
     read_buffer: BytesMut,
+    mode: TransportMode,
+    text_line_buffer: String,
 }
 
 impl MessageChannel<TcpStream> {
@@ -54,6 +72,8 @@ impl MessageChannel<TcpStream> {
         Self {
             inner: stream,
             read_buffer: BytesMut::with_capacity(4096),
+            mode: TransportMode::Binary,
+            text_line_buffer: String::new(),
         }
     }
 }
@@ -64,6 +84,18 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
         Self {
             inner: stream,
             read_buffer: BytesMut::with_capacity(4096),
+            mode: TransportMode::Binary,
+            text_line_buffer: String::new(),
+        }
+    }
+
+    /// Create a new message channel with SSH-safe text mode
+    pub fn new_with_text_safe_mode(stream: T) -> Self {
+        Self {
+            inner: stream,
+            read_buffer: BytesMut::with_capacity(4096),
+            mode: TransportMode::TextSafe,
+            text_line_buffer: String::new(),
         }
     }
     /// Send a message over the channel
@@ -81,14 +113,24 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
             )));
         }
 
-        // Write channel ID (1 byte)
-        self.inner.write_u8(channel_id.0).await?;
+        match self.mode {
+            TransportMode::Binary => {
+                // Write channel ID (1 byte)
+                self.inner.write_u8(channel_id.0).await?;
 
-        // Write payload length (2 bytes, big endian)
-        self.inner.write_u16(payload_len as u16).await?;
+                // Write payload length (2 bytes, big endian)
+                self.inner.write_u16(payload_len as u16).await?;
 
-        // Write payload
-        self.inner.write_all(&payload).await?;
+                // Write payload
+                self.inner.write_all(&payload).await?;
+            }
+            TransportMode::TextSafe => {
+                // Encode as text-safe format: VSC:CCLLLL<base64>\n
+                let encoded_payload = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &payload);
+                let frame = format!("VSC:{:02X}{:04X}{}\n", channel_id.0, payload_len, encoded_payload);
+                self.inner.write_all(frame.as_bytes()).await?;
+            }
+        }
 
         // Explicitly flush the stream to ensure data is sent
         self.inner.flush().await?;
@@ -98,6 +140,13 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
 
     /// Receive a message from the channel
     pub async fn receive(&mut self) -> Result<Message> {
+        match self.mode {
+            TransportMode::Binary => self.receive_binary().await,
+            TransportMode::TextSafe => self.receive_text_safe().await,
+        }
+    }
+
+    async fn receive_binary(&mut self) -> Result<Message> {
         loop {
             // Try to read a complete message from the buffer
             if self.read_buffer.len() >= 3 {
@@ -126,6 +175,68 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
 
             if bytes_read == 0 {
                 return Err(ChannelError::Closed);
+            }
+        }
+    }
+
+    async fn receive_text_safe(&mut self) -> Result<Message> {
+        eprintln!("MSGCHAN: receive_text_safe starting");
+        loop {
+            // Read data into buffer and append to text line buffer
+            eprintln!("MSGCHAN: trying to read from inner stream");
+            let bytes_read = self.inner.read_buf(&mut self.read_buffer).await?;
+            eprintln!("MSGCHAN: read {} bytes", bytes_read);
+            
+            if bytes_read == 0 {
+                eprintln!("MSGCHAN: EOF on stream");
+                return Err(ChannelError::Closed);
+            }
+
+            // Convert new bytes to string and append to line buffer
+            let new_text = String::from_utf8_lossy(&self.read_buffer);
+            eprintln!("MSGCHAN: new text received: {:?}", new_text);
+            self.text_line_buffer.push_str(&new_text);
+            self.read_buffer.clear();
+            eprintln!("MSGCHAN: current line buffer: {:?}", self.text_line_buffer);
+
+            // Look for complete lines ending with \n
+            while let Some(newline_pos) = self.text_line_buffer.find('\n') {
+                let line = self.text_line_buffer.drain(..=newline_pos).collect::<String>();
+                let line = line.trim_end_matches('\n');
+                eprintln!("MSGCHAN: processing line: {:?}", line);
+
+                // Parse VSC:CCLLLL<base64> format
+                if line.starts_with("VSC:") && line.len() >= 10 {
+                    let channel_hex = &line[4..6];
+                    let length_hex = &line[6..10];
+                    let base64_data = &line[10..];
+                    eprintln!("MSGCHAN: parsing VSC message - channel:{}, length:{}, data:{}", channel_hex, length_hex, base64_data);
+
+                    if let (Ok(channel_id), Ok(expected_len)) = (
+                        u8::from_str_radix(channel_hex, 16),
+                        u16::from_str_radix(length_hex, 16),
+                    ) {
+                        match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, base64_data) {
+                            Ok(payload_bytes) => {
+                                eprintln!("MSGCHAN: decoded {} bytes, expected {}", payload_bytes.len(), expected_len);
+                                if payload_bytes.len() == expected_len as usize {
+                                    eprintln!("MSGCHAN: returning message successfully");
+                                    return Ok(Message {
+                                        channel_id: ChannelId(channel_id),
+                                        payload: Bytes::from(payload_bytes),
+                                    });
+                                } else {
+                                    eprintln!("MSGCHAN: Length mismatch: expected {}, got {}", expected_len, payload_bytes.len());
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("MSGCHAN: Base64 decode error: {}", e);
+                            }
+                        }
+                    }
+                } else {
+                    eprintln!("MSGCHAN: Invalid line format: {}", line);
+                }
             }
         }
     }

@@ -39,10 +39,10 @@ impl StdioAdapter {
                 // Read from stdin
                 match stdin.read(&mut buffer) {
                     Ok(0) => {
-                        // EOF
-                        eprintln!("REMOTE_SERVER_LOG: StdioAdapter read thread: EOF from stdin");
-                        // Exit thread on EOF to avoid infinite loop
-                        break;
+                        // EOF - but don't exit, SSH might send more data later
+                        eprintln!("REMOTE_SERVER_LOG: StdioAdapter read thread: EOF from stdin, waiting...");
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        continue;
                     }
                     Ok(n) => {
                         // Data read
@@ -415,7 +415,7 @@ async fn main() -> Result<()> {
     let multiplexer = if args.stdio {
         // Create a stdio adapter
         let stdio_adapter = StdioAdapter::new();
-        let message_channel = MessageChannel::new_with_stream(stdio_adapter);
+        let message_channel = MessageChannel::new_with_text_safe_mode(stdio_adapter);
         Multiplexer::new(message_channel)
     } else {
         // Create a TCP listener

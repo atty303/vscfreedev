@@ -8,3 +8,4 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-uti
 anyhow = "1"
 thiserror = "2"
 bytes = "1"
+base64 = "0.22"

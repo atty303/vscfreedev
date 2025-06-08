@@ -117,7 +117,8 @@ impl AsyncWrite for SshChannelAdapter {
                 println!("SshChannelAdapter::poll_write wrote {} bytes", n);
                 if n > 0 {
                     // Log the actual data written for debugging
-                    println!("SshChannelAdapter::poll_write data: {:?}", &buf[..n]);
+                    let data_str = String::from_utf8_lossy(&buf[..n]);
+                    println!("SshChannelAdapter::poll_write data: {}", data_str);
                 }
 
                 // Try to flush the channel after writing
@@ -159,29 +160,10 @@ impl AsyncWrite for SshChannelAdapter {
         self: Pin<&mut Self>,
         _cx: &mut TaskContext<'_>,
     ) -> Poll<std::io::Result<()>> {
-        println!("SshChannelAdapter::poll_shutdown called");
+        println!("SshChannelAdapter::poll_shutdown called - NOT sending EOF to keep channel open");
 
-        let mut channel = match self.channel.lock() {
-            Ok(channel) => channel,
-            Err(e) => {
-                println!("ERROR: Failed to lock SSH channel for shutdown: {:?}", e);
-                return Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Failed to lock SSH channel",
-                )));
-            }
-        };
-
-        // Send EOF to signal that we're done writing
-        println!("SshChannelAdapter::poll_shutdown - sending EOF");
-        if let Err(e) = channel.send_eof() {
-            println!("ERROR: SshChannelAdapter::poll_shutdown EOF error: {:?}", e);
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("SSH EOF error: {}", e),
-            )));
-        }
-
+        // Don't send EOF here as it closes stdin and breaks bidirectional communication
+        // SSH channels should remain open for continuous communication
         Poll::Ready(Ok(()))
     }
 }
@@ -335,112 +317,69 @@ pub mod client {
 
         println!("Check command output: {}", check_output);
 
-        // Start the remote executable with standard I/O and verbose output
+        // Start the remote executable with standard I/O using shell session
         let mut channel = sess.channel_session().context("Failed to create SSH channel")?;
-        println!("Starting remote executable: {}", remote_path);
+        println!("Starting remote executable via shell: {}", remote_path);
 
-        // Do NOT request a PTY for this channel, as we're going to be sending binary data
-        // and don't want terminal processing to interfere
-
-        // Run the remote executable with the stdio flag to use standard I/O
-        channel.exec(&format!("{} -s 2>/tmp/remote_stderr.log", remote_path))
-            .context("Failed to start remote executable")?;
+        // Start a shell session to keep stdin open
+        channel.shell().context("Failed to start shell")?;
+        
+        // Send the command to start the remote executable
+        let start_cmd = format!("exec {} -s 2>/tmp/remote_stderr.log\n", remote_path);
+        channel.write_all(start_cmd.as_bytes()).context("Failed to send start command")?;
         println!("Remote executable started");
 
         // Read any initial data from the channel
-        // The remote server might send some output before we establish the message channel
         let mut initial_data = Vec::new();
         let mut buf = [0u8; 1024];
 
-        // Try to read with a timeout
+        // Try to read with a timeout to get the welcome message
         let read_result = time::timeout(
             Duration::from_secs(5),
             async {
-                loop {
+                for _ in 0..10 {  // Limit iterations to avoid infinite loop
                     match channel.read(&mut buf) {
                         Ok(0) => {
                             println!("SSH channel EOF after starting remote executable");
-
-                            // Try to get the stderr log
-                            let mut stderr_check = sess.channel_session().context("Failed to create SSH channel for stderr check")?;
-                            stderr_check.exec("cat /tmp/remote_stderr.log")?;
-                            let mut stderr_output = String::new();
-                            stderr_check.read_to_string(&mut stderr_output)?;
-                            println!("Remote stderr log: {}", stderr_output);
-
-                            return Err(anyhow::anyhow!("SSH channel EOF immediately after starting remote executable"));
+                            return Err(anyhow::anyhow!("SSH channel EOF immediately"));
                         },
                         Ok(n) => {
-                            println!("Read {} bytes from SSH channel after starting remote executable", n);
+                            println!("Read {} bytes from SSH channel", n);
                             initial_data.extend_from_slice(&buf[..n]);
 
-                            // If we've read some data, try to see if it contains a welcome message
+                            // Check if we have a complete VSC message
                             if let Ok(data_str) = std::str::from_utf8(&initial_data) {
-                                println!("Initial data from SSH channel: {}", data_str);
-                                if data_str.contains("Welcome") {
-                                    println!("Found welcome message in initial data");
+                                if data_str.contains("VSC:") && data_str.contains('\n') {
+                                    println!("Found complete VSC message in initial data");
                                     break;
                                 }
                             }
 
-                            // Small delay to allow more data to arrive
-                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            tokio::time::sleep(Duration::from_millis(200)).await;
                         },
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            // This is expected for a non-blocking channel
-                            println!("SSH channel would block, which is expected");
-
-                            // If we've already read some data, we can proceed
-                            if !initial_data.is_empty() {
-                                break;
-                            }
-
-                            // Small delay to allow more data to arrive
                             tokio::time::sleep(Duration::from_millis(100)).await;
                         },
                         Err(e) => {
-                            println!("WARNING: SSH channel error after starting remote executable: {}", e);
-
-                            // Try to get the stderr log
-                            let mut stderr_check = sess.channel_session().context("Failed to create SSH channel for stderr check")?;
-                            stderr_check.exec("cat /tmp/remote_stderr.log")?;
-                            let mut stderr_output = String::new();
-                            stderr_check.read_to_string(&mut stderr_output)?;
-                            println!("Remote stderr log: {}", stderr_output);
-
-                            return Err(anyhow::anyhow!("SSH channel error immediately after starting remote executable: {}", e));
+                            return Err(anyhow::anyhow!("SSH channel error: {}", e));
                         }
                     }
                 }
-
-                Ok::<_, anyhow::Error>(())
+                Ok(())
             }
         ).await;
 
-        // If we timed out reading, but have some data, that's okay
-        if read_result.is_err() && !initial_data.is_empty() {
-            println!("Timed out reading from SSH channel, but we have {} bytes of initial data", initial_data.len());
-        } else if let Err(e) = read_result {
-            println!("Timed out reading from SSH channel with no data: {}", e);
-        } else if let Err(e) = read_result.unwrap() {
-            return Err(e);
+        if read_result.is_err() {
+            println!("Timed out reading initial data, but continuing...");
         }
 
-        // If we have initial data, check if it contains a welcome message
-        if !initial_data.is_empty() {
-            if let Ok(data_str) = std::str::from_utf8(&initial_data) {
-                println!("Initial data from SSH channel: {}", data_str);
-                if data_str.contains("Welcome") {
-                    println!("Found welcome message in initial data");
-                }
-            }
-        }
+        println!("Total initial data received: {} bytes", initial_data.len());
 
         // Create an adapter for the SSH channel
         let ssh_adapter = SshChannelAdapter::new(channel);
 
-        // Create a message channel using the SSH channel adapter
-        let message_channel = MessageChannel::new_with_stream(ssh_adapter);
+        // Create a message channel using text-safe mode for SSH
+        let message_channel = MessageChannel::new_with_text_safe_mode(ssh_adapter);
 
         // Create a multiplexer
         let multiplexer = Multiplexer::new(message_channel);
@@ -458,9 +397,9 @@ pub mod client {
         let mut welcome_found = false;
         if !initial_data.is_empty() {
             if let Ok(data_str) = std::str::from_utf8(&initial_data) {
-                if data_str.contains("Welcome") {
+                if data_str.contains("Welcome") || data_str.contains("VSC:") {
                     welcome_found = true;
-                    println!("Already found welcome message in initial data: {}", data_str);
+                    println!("Already found welcome message in initial data");
                 }
             }
         }
