@@ -38,7 +38,7 @@ pub enum ClientError {
 }
 
 /// Handler for SSH client events
-struct MyHandler {
+pub(crate) struct MyHandler {
     data_tx: Arc<Mutex<Option<mpsc::UnboundedSender<Vec<u8>>>>>,
 }
 
@@ -94,7 +94,7 @@ pub struct SshChannelAdapter {
 
 impl SshChannelAdapter {
     /// Create a new SSH channel adapter
-    pub fn new(
+    pub(crate) fn new(
         handle: Handle<MyHandler>,
         channel_id: ChannelId,
         read_rx: mpsc::UnboundedReceiver<Vec<u8>>,
