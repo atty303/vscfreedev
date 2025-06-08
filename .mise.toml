@@ -7,8 +7,3 @@ zig = "0.14.0"
 run = [
     "rustup target add x86_64-unknown-linux-gnu",
 ]
-
-[tasks.test]
-run = [
-    "cargo zigbuild -p vscfreedev-remote --target x86_64-unknown-linux-gnu"
-]
