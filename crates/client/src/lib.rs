@@ -4,15 +4,19 @@ use anyhow::Result;
 use bytes::Bytes;
 use russh::ChannelId;
 use russh::client::{AuthResult, Config, Handle, Handler, Session, connect};
+use std::collections::HashMap;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::{Mutex, mpsc};
-use tracing::{debug, error, info};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::sync::{Mutex, RwLock, mpsc};
+use tracing::{debug, error, info, warn};
 use vscfreedev_core::message_channel::MessageChannel;
 use vscfreedev_core::port_forward::{PortForwardManager, PortForwardMessage};
+
+/// Type alias for active connections map  
+type ActiveConnections = Arc<RwLock<HashMap<u16, HashMap<u32, mpsc::UnboundedSender<Bytes>>>>>;
 
 /// Path to the remote binary built by build.rs
 pub const REMOTE_BINARY_PATH: &str = env!("VSCFREEDEV_REMOTE_BINARY_PATH");
@@ -199,22 +203,122 @@ impl AsyncWrite for SshChannelAdapter {
 
 /// Client with port forwarding capabilities
 pub struct VscFreedevClient {
-    message_channel: MessageChannel<SshChannelAdapter>,
+    message_channel: Arc<Mutex<MessageChannel<SshChannelAdapter>>>,
     port_forward_manager: PortForwardManager,
+    // Track active connections: local_port -> (connection_id -> sender)
+    active_connections: ActiveConnections,
+    next_connection_id: Arc<RwLock<u32>>,
+    // Channel for control message responses
+    control_response_rx: Arc<Mutex<mpsc::UnboundedReceiver<PortForwardMessage>>>,
 }
 
 impl VscFreedevClient {
     /// Create a new client with an existing message channel
     pub fn new(message_channel: MessageChannel<SshChannelAdapter>) -> Self {
-        Self {
-            message_channel,
+        let (control_response_tx, control_response_rx) = mpsc::unbounded_channel();
+
+        let client = Self {
+            message_channel: Arc::new(Mutex::new(message_channel)),
             port_forward_manager: PortForwardManager::new(),
-        }
+            active_connections: Arc::new(RwLock::new(HashMap::new())),
+            next_connection_id: Arc::new(RwLock::new(1)),
+            control_response_rx: Arc::new(Mutex::new(control_response_rx)),
+        };
+
+        // Start the message handler once when the client is created
+        let message_channel = client.message_channel.clone();
+        let active_connections = client.active_connections.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let message_bytes = {
+                    let mut channel = message_channel.lock().await;
+                    match channel.receive().await {
+                        Ok(bytes) => bytes,
+                        Err(e) => {
+                            error!("Failed to receive message from remote: {}", e);
+                            break;
+                        }
+                    }
+                };
+
+                let message_str = String::from_utf8_lossy(&message_bytes);
+
+                // Try to parse as port forward message
+                if let Ok(port_forward_msg) =
+                    serde_json::from_str::<PortForwardMessage>(&message_str)
+                {
+                    match port_forward_msg {
+                        PortForwardMessage::StartResponse { .. }
+                        | PortForwardMessage::StopResponse { .. } => {
+                            // Route control responses to the control channel
+                            if let Err(e) = control_response_tx.send(port_forward_msg) {
+                                error!("Failed to send control response: {}", e);
+                            }
+                        }
+                        PortForwardMessage::Data {
+                            local_port,
+                            connection_id,
+                            data,
+                        } => {
+                            debug!(
+                                "Received {} bytes for connection {} on port {}",
+                                data.len(),
+                                connection_id,
+                                local_port
+                            );
+
+                            let connections = active_connections.read().await;
+                            if let Some(port_connections) = connections.get(&local_port) {
+                                if let Some(sender) = port_connections.get(&connection_id) {
+                                    if let Err(e) = sender.send(Bytes::from(data)) {
+                                        warn!(
+                                            "Failed to send data to connection {}: {}",
+                                            connection_id, e
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        PortForwardMessage::CloseConnection {
+                            local_port,
+                            connection_id,
+                        } => {
+                            debug!(
+                                "Remote closed connection {} for port {}",
+                                connection_id, local_port
+                            );
+
+                            let mut connections = active_connections.write().await;
+                            if let Some(port_connections) = connections.get_mut(&local_port) {
+                                port_connections.remove(&connection_id);
+                            }
+                        }
+                        _ => {
+                            debug!("Received other message type: {:?}", port_forward_msg);
+                        }
+                    }
+                } else {
+                    debug!("Received non-port-forward message: {}", message_str);
+                }
+            }
+        });
+
+        client
+    }
+
+    /// Get next connection ID
+    #[allow(dead_code)]
+    async fn next_connection_id(&self) -> u32 {
+        let mut id = self.next_connection_id.write().await;
+        let current = *id;
+        *id += 1;
+        current
     }
 
     /// Start port forwarding from local port to remote host:port
     pub async fn start_port_forward(
-        &mut self,
+        &self,
         local_port: u16,
         remote_host: &str,
         remote_port: u16,
@@ -230,21 +334,22 @@ impl VscFreedevClient {
         let request_json = serde_json::to_string(&request)
             .map_err(|e| ClientError::Channel(format!("Failed to serialize request: {}", e)))?;
 
-        self.message_channel
-            .send(Bytes::from(request_json))
-            .await
-            .map_err(|e| ClientError::Channel(format!("Failed to send request: {}", e)))?;
+        // Send the request
+        {
+            let mut channel = self.message_channel.lock().await;
+            channel
+                .send(Bytes::from(request_json))
+                .await
+                .map_err(|e| ClientError::Channel(format!("Failed to send request: {}", e)))?;
+        }
 
-        // Wait for response
-        let response_bytes = self
-            .message_channel
-            .receive()
-            .await
-            .map_err(|e| ClientError::Channel(format!("Failed to receive response: {}", e)))?;
-
-        let response_str = String::from_utf8_lossy(&response_bytes);
-        let response: PortForwardMessage = serde_json::from_str(&response_str)
-            .map_err(|e| ClientError::Channel(format!("Failed to parse response: {}", e)))?;
+        // Wait for response on the control channel
+        let response = {
+            let mut control_rx = self.control_response_rx.lock().await;
+            control_rx.recv().await.ok_or_else(|| {
+                ClientError::Channel("Control response channel closed".to_string())
+            })?
+        };
 
         match response {
             PortForwardMessage::StartResponse { success: true, .. } => {
@@ -255,6 +360,15 @@ impl VscFreedevClient {
                     .map_err(|e| {
                         ClientError::Channel(format!("Failed to start local forwarding: {}", e))
                     })?;
+
+                // Initialize connection map for this port
+                {
+                    let mut connections = self.active_connections.write().await;
+                    connections.insert(local_port, HashMap::new());
+                }
+
+                // Start accepting connections
+                self.start_accepting_connections(local_port).await?;
 
                 info!(
                     "Port forwarding started: {} -> {}:{}",
@@ -273,8 +387,144 @@ impl VscFreedevClient {
         }
     }
 
+    /// Start accepting connections for a port forward
+    async fn start_accepting_connections(&self, local_port: u16) -> Result<(), ClientError> {
+        let port_forward = self
+            .port_forward_manager
+            .get_forward(local_port)
+            .await
+            .ok_or_else(|| ClientError::Channel("Port forward not found".to_string()))?;
+
+        let message_channel = self.message_channel.clone();
+        let active_connections = self.active_connections.clone();
+        let next_connection_id = self.next_connection_id.clone();
+
+        tokio::spawn(async move {
+            loop {
+                match port_forward.listener.accept().await {
+                    Ok((mut stream, addr)) => {
+                        let connection_id = {
+                            let mut id = next_connection_id.write().await;
+                            let current = *id;
+                            *id += 1;
+                            current
+                        };
+
+                        info!(
+                            "New connection {} from {} on port {}",
+                            connection_id, addr, local_port
+                        );
+
+                        // Send new connection message
+                        let new_conn_msg = PortForwardMessage::NewConnection {
+                            local_port,
+                            connection_id,
+                        };
+
+                        if let Ok(msg_json) = serde_json::to_string(&new_conn_msg) {
+                            let mut channel = message_channel.lock().await;
+                            if let Err(e) = channel.send(Bytes::from(msg_json)).await {
+                                error!("Failed to send new connection message: {}", e);
+                                continue;
+                            }
+                        }
+
+                        // Create channel for receiving data from remote
+                        let (tx, mut rx) = mpsc::unbounded_channel();
+                        {
+                            let mut connections = active_connections.write().await;
+                            if let Some(port_connections) = connections.get_mut(&local_port) {
+                                port_connections.insert(connection_id, tx);
+                            }
+                        }
+
+                        let message_channel_clone = message_channel.clone();
+                        let active_connections_clone = active_connections.clone();
+
+                        // Handle this connection
+                        tokio::spawn(async move {
+                            let mut buf = [0; 4096];
+                            loop {
+                                tokio::select! {
+                                    // Read from TCP stream and send to remote
+                                    result = stream.read(&mut buf) => {
+                                        match result {
+                                            Ok(0) => {
+                                                debug!("Connection {} closed by client", connection_id);
+                                                break;
+                                            }
+                                            Ok(n) => {
+                                                let data_msg = PortForwardMessage::Data {
+                                                    local_port,
+                                                    connection_id,
+                                                    data: buf[..n].to_vec(),
+                                                };
+
+                                                if let Ok(msg_json) = serde_json::to_string(&data_msg) {
+                                                    let mut channel = message_channel_clone.lock().await;
+                                                    if let Err(e) = channel.send(Bytes::from(msg_json)).await {
+                                                        error!("Failed to send data message: {}", e);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                error!("Error reading from connection {}: {}", connection_id, e);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    // Receive data from remote and write to TCP stream
+                                    data = rx.recv() => {
+                                        match data {
+                                            Some(data) => {
+                                                if let Err(e) = stream.write_all(&data).await {
+                                                    error!("Error writing to connection {}: {}", connection_id, e);
+                                                    break;
+                                                }
+                                            }
+                                            None => {
+                                                debug!("Data channel closed for connection {}", connection_id);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Clean up connection
+                            {
+                                let mut connections = active_connections_clone.write().await;
+                                if let Some(port_connections) = connections.get_mut(&local_port) {
+                                    port_connections.remove(&connection_id);
+                                }
+                            }
+
+                            // Send close connection message
+                            let close_msg = PortForwardMessage::CloseConnection {
+                                local_port,
+                                connection_id,
+                            };
+
+                            if let Ok(msg_json) = serde_json::to_string(&close_msg) {
+                                let mut channel = message_channel_clone.lock().await;
+                                let _ = channel.send(Bytes::from(msg_json)).await;
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("Error accepting connection on port {}: {}", local_port, e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
     /// Stop port forwarding for a local port
-    pub async fn stop_port_forward(&mut self, local_port: u16) -> Result<(), ClientError> {
+    pub async fn stop_port_forward(&self, local_port: u16) -> Result<(), ClientError> {
         // Create the stop request
         let request = PortForwardMessage::StopRequest { local_port };
 
@@ -282,24 +532,31 @@ impl VscFreedevClient {
         let request_json = serde_json::to_string(&request)
             .map_err(|e| ClientError::Channel(format!("Failed to serialize request: {}", e)))?;
 
-        self.message_channel
-            .send(Bytes::from(request_json))
-            .await
-            .map_err(|e| ClientError::Channel(format!("Failed to send request: {}", e)))?;
+        // Send the request
+        {
+            let mut channel = self.message_channel.lock().await;
+            channel
+                .send(Bytes::from(request_json))
+                .await
+                .map_err(|e| ClientError::Channel(format!("Failed to send request: {}", e)))?;
+        }
 
-        // Wait for response
-        let response_bytes = self
-            .message_channel
-            .receive()
-            .await
-            .map_err(|e| ClientError::Channel(format!("Failed to receive response: {}", e)))?;
-
-        let response_str = String::from_utf8_lossy(&response_bytes);
-        let response: PortForwardMessage = serde_json::from_str(&response_str)
-            .map_err(|e| ClientError::Channel(format!("Failed to parse response: {}", e)))?;
+        // Wait for response on the control channel
+        let response = {
+            let mut control_rx = self.control_response_rx.lock().await;
+            control_rx.recv().await.ok_or_else(|| {
+                ClientError::Channel("Control response channel closed".to_string())
+            })?
+        };
 
         match response {
             PortForwardMessage::StopResponse { success: true, .. } => {
+                // Clean up connections for this port
+                {
+                    let mut connections = self.active_connections.write().await;
+                    connections.remove(&local_port);
+                }
+
                 // Stop local port forwarding
                 self.port_forward_manager
                     .stop_forward(local_port)
@@ -323,19 +580,57 @@ impl VscFreedevClient {
     }
 
     /// Send a simple message (for testing compatibility)
-    pub async fn send_message(&mut self, message: Bytes) -> Result<(), ClientError> {
-        self.message_channel
+    pub async fn send_message(&self, message: Bytes) -> Result<(), ClientError> {
+        let mut channel = self.message_channel.lock().await;
+        channel
             .send(message)
             .await
             .map_err(|e| ClientError::Channel(format!("Failed to send message: {}", e)))
     }
 
     /// Receive a simple message (for testing compatibility)
-    pub async fn receive_message(&mut self) -> Result<Bytes, ClientError> {
-        self.message_channel
+    pub async fn receive_message(&self) -> Result<Bytes, ClientError> {
+        let mut channel = self.message_channel.lock().await;
+        channel
             .receive()
             .await
             .map_err(|e| ClientError::Channel(format!("Failed to receive message: {}", e)))
+    }
+
+    /// Handle incoming port forward messages from remote
+    pub async fn handle_incoming_message(
+        &self,
+        message: PortForwardMessage,
+    ) -> Result<(), ClientError> {
+        match message {
+            PortForwardMessage::Data {
+                local_port,
+                connection_id,
+                data,
+            } => {
+                let connections = self.active_connections.read().await;
+                if let Some(port_connections) = connections.get(&local_port) {
+                    if let Some(sender) = port_connections.get(&connection_id) {
+                        if let Err(e) = sender.send(Bytes::from(data)) {
+                            warn!("Failed to send data to connection {}: {}", connection_id, e);
+                        }
+                    }
+                }
+            }
+            PortForwardMessage::CloseConnection {
+                local_port,
+                connection_id,
+            } => {
+                let mut connections = self.active_connections.write().await;
+                if let Some(port_connections) = connections.get_mut(&local_port) {
+                    port_connections.remove(&connection_id);
+                }
+            }
+            _ => {
+                debug!("Ignoring message type: {:?}", message);
+            }
+        }
+        Ok(())
     }
 }
 
