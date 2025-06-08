@@ -1,6 +1,7 @@
 //! Client-side library for vscfreedev
 
 use anyhow::Result;
+use bytes::Bytes;
 use russh::ChannelId;
 use russh::client::{AuthResult, Config, Handle, Handler, Session, connect};
 use std::path::Path;
@@ -11,6 +12,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info};
 use vscfreedev_core::message_channel::MessageChannel;
+use vscfreedev_core::port_forward::{PortForwardManager, PortForwardMessage};
 
 /// Path to the remote binary built by build.rs
 pub const REMOTE_BINARY_PATH: &str = env!("VSCFREEDEV_REMOTE_BINARY_PATH");
@@ -195,6 +197,148 @@ impl AsyncWrite for SshChannelAdapter {
     }
 }
 
+/// Client with port forwarding capabilities
+pub struct VscFreedevClient {
+    message_channel: MessageChannel<SshChannelAdapter>,
+    port_forward_manager: PortForwardManager,
+}
+
+impl VscFreedevClient {
+    /// Create a new client with an existing message channel
+    pub fn new(message_channel: MessageChannel<SshChannelAdapter>) -> Self {
+        Self {
+            message_channel,
+            port_forward_manager: PortForwardManager::new(),
+        }
+    }
+
+    /// Start port forwarding from local port to remote host:port
+    pub async fn start_port_forward(
+        &mut self,
+        local_port: u16,
+        remote_host: &str,
+        remote_port: u16,
+    ) -> Result<(), ClientError> {
+        // Create the port forward request
+        let request = PortForwardMessage::StartRequest {
+            local_port,
+            remote_host: remote_host.to_string(),
+            remote_port,
+        };
+
+        // Serialize and send the request
+        let request_json = serde_json::to_string(&request)
+            .map_err(|e| ClientError::Channel(format!("Failed to serialize request: {}", e)))?;
+
+        self.message_channel
+            .send(Bytes::from(request_json))
+            .await
+            .map_err(|e| ClientError::Channel(format!("Failed to send request: {}", e)))?;
+
+        // Wait for response
+        let response_bytes = self
+            .message_channel
+            .receive()
+            .await
+            .map_err(|e| ClientError::Channel(format!("Failed to receive response: {}", e)))?;
+
+        let response_str = String::from_utf8_lossy(&response_bytes);
+        let response: PortForwardMessage = serde_json::from_str(&response_str)
+            .map_err(|e| ClientError::Channel(format!("Failed to parse response: {}", e)))?;
+
+        match response {
+            PortForwardMessage::StartResponse { success: true, .. } => {
+                // Start local port forwarding
+                self.port_forward_manager
+                    .start_forward(local_port, remote_host.to_string(), remote_port)
+                    .await
+                    .map_err(|e| {
+                        ClientError::Channel(format!("Failed to start local forwarding: {}", e))
+                    })?;
+
+                info!(
+                    "Port forwarding started: {} -> {}:{}",
+                    local_port, remote_host, remote_port
+                );
+                Ok(())
+            }
+            PortForwardMessage::StartResponse {
+                success: false,
+                error,
+                ..
+            } => Err(ClientError::RemoteExecution(error.unwrap_or_else(|| {
+                "Unknown error starting port forward".to_string()
+            }))),
+            _ => Err(ClientError::Channel("Unexpected response type".to_string())),
+        }
+    }
+
+    /// Stop port forwarding for a local port
+    pub async fn stop_port_forward(&mut self, local_port: u16) -> Result<(), ClientError> {
+        // Create the stop request
+        let request = PortForwardMessage::StopRequest { local_port };
+
+        // Serialize and send the request
+        let request_json = serde_json::to_string(&request)
+            .map_err(|e| ClientError::Channel(format!("Failed to serialize request: {}", e)))?;
+
+        self.message_channel
+            .send(Bytes::from(request_json))
+            .await
+            .map_err(|e| ClientError::Channel(format!("Failed to send request: {}", e)))?;
+
+        // Wait for response
+        let response_bytes = self
+            .message_channel
+            .receive()
+            .await
+            .map_err(|e| ClientError::Channel(format!("Failed to receive response: {}", e)))?;
+
+        let response_str = String::from_utf8_lossy(&response_bytes);
+        let response: PortForwardMessage = serde_json::from_str(&response_str)
+            .map_err(|e| ClientError::Channel(format!("Failed to parse response: {}", e)))?;
+
+        match response {
+            PortForwardMessage::StopResponse { success: true, .. } => {
+                // Stop local port forwarding
+                self.port_forward_manager
+                    .stop_forward(local_port)
+                    .await
+                    .map_err(|e| {
+                        ClientError::Channel(format!("Failed to stop local forwarding: {}", e))
+                    })?;
+
+                info!("Port forwarding stopped for port {}", local_port);
+                Ok(())
+            }
+            PortForwardMessage::StopResponse {
+                success: false,
+                error,
+                ..
+            } => Err(ClientError::RemoteExecution(error.unwrap_or_else(|| {
+                "Unknown error stopping port forward".to_string()
+            }))),
+            _ => Err(ClientError::Channel("Unexpected response type".to_string())),
+        }
+    }
+
+    /// Send a simple message (for testing compatibility)
+    pub async fn send_message(&mut self, message: Bytes) -> Result<(), ClientError> {
+        self.message_channel
+            .send(message)
+            .await
+            .map_err(|e| ClientError::Channel(format!("Failed to send message: {}", e)))
+    }
+
+    /// Receive a simple message (for testing compatibility)
+    pub async fn receive_message(&mut self) -> Result<Bytes, ClientError> {
+        self.message_channel
+            .receive()
+            .await
+            .map_err(|e| ClientError::Channel(format!("Failed to receive message: {}", e)))
+    }
+}
+
 /// Public client interface
 pub mod client {
     use super::*;
@@ -269,6 +413,18 @@ pub mod client {
         let message_channel = MessageChannel::new_with_stream(ssh_adapter);
 
         Ok(message_channel)
+    }
+
+    /// Connect to a remote host via SSH and return a VscFreedevClient
+    pub async fn connect_ssh_with_port_forward(
+        host: &str,
+        port: u16,
+        username: &str,
+        password: Option<&str>,
+        key_path: Option<&Path>,
+    ) -> Result<VscFreedevClient, ClientError> {
+        let message_channel = connect_ssh(host, port, username, password, key_path).await?;
+        Ok(VscFreedevClient::new(message_channel))
     }
 
     /// Get the path to the built remote binary

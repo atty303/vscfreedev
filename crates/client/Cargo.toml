@@ -16,6 +16,9 @@ russh = { workspace = true }
 russh-keys = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
+bytes = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -13,9 +13,9 @@ FROM rust:slim
 
 WORKDIR /app
 
-# Install OpenSSH server and other dependencies
+# Install OpenSSH server, netcat, and other dependencies
 RUN apt-get update && \
-    apt-get install -y openssh-server && \
+    apt-get install -y openssh-server netcat-openbsd socat && \
     mkdir -p /run/sshd && \
     echo 'root:password' | chpasswd && \
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
@@ -24,14 +24,14 @@ RUN apt-get update && \
 # Copy the remote server binary
 COPY vscfreedev_remote /usr/local/bin/
 
-# Expose SSH port
-EXPOSE 22
+# Expose SSH port and test service port
+EXPOSE 22 8888
 
 # Create a directory for logs
 RUN mkdir -p /var/log/vscfreedev
 
-# Start SSH server only, remote server will be started via SSH
-RUN echo '#!/bin/bash\n/usr/sbin/sshd -E /var/log/sshd.log\necho "SSH server started"\necho "Waiting for remote server files..."\nwhile true; do\n  if [ -f /tmp/remote_help.txt ]; then\n    echo "=== Remote Server Help File ==="\n    cat /tmp/remote_help.txt\n    echo "=============================="\n    break\n  fi\n  sleep 1\ndone\ntail -f /var/log/sshd.log /tmp/remote.log /tmp/remote_fallback.log /tmp/remote_panic.log /tmp/remote_stderr.log /tmp/remote_panic.txt /tmp/remote_startup.txt /tmp/remote_help.txt 2>/dev/null || true\nwhile true; do sleep 1; done' > /start.sh && \
+# Start SSH server and test echo service
+RUN echo '#!/bin/bash\n/usr/sbin/sshd -E /var/log/sshd.log\necho "SSH server started"\n# Start a simple echo service on port 8888\nnc -l -p 8888 -k -e /bin/cat &\necho "Echo service started on port 8888"\necho "Waiting for remote server files..."\nwhile true; do\n  if [ -f /tmp/remote_help.txt ]; then\n    echo "=== Remote Server Help File ==="\n    cat /tmp/remote_help.txt\n    echo "=============================="\n    break\n  fi\n  sleep 1\ndone\ntail -f /var/log/sshd.log /tmp/remote.log /tmp/remote_fallback.log /tmp/remote_panic.log /tmp/remote_stderr.log /tmp/remote_panic.txt /tmp/remote_startup.txt /tmp/remote_help.txt 2>/dev/null || true\nwhile true; do sleep 1; done' > /start.sh && \
     chmod +x /start.sh
 CMD ["/start.sh"]
 "#;
@@ -99,6 +99,7 @@ impl RemoteContainer {
     }
 
     /// Get the logs from the container
+    #[allow(dead_code)]
     pub async fn get_logs(&self) -> Result<String> {
         let output = Command::new("docker")
             .args(["logs", &self.container_name])
@@ -120,7 +121,11 @@ impl RemoteContainer {
         self.get_mapped_port("22/tcp").await
     }
 
-    // Remote port is no longer needed as we're using SSH standard I/O
+    /// Get the echo service port for the container
+    #[allow(dead_code)]
+    pub async fn echo_service_port(&self) -> Result<u16> {
+        self.get_mapped_port("8888/tcp").await
+    }
 
     /// Get a mapped port for the container
     async fn get_mapped_port(&self, port_spec: &str) -> Result<u16> {
@@ -141,7 +146,7 @@ impl RemoteContainer {
         let port = port_mapping
             .trim()
             .split(':')
-            .last()
+            .next_back()
             .context("Invalid port mapping format")?
             .parse::<u16>()
             .context("Failed to parse port number")?;

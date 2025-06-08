@@ -1,9 +1,12 @@
 use anyhow::Result;
+use bytes::Bytes;
 use clap::Parser;
 use std::io::Write;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
 use vscfreedev_core::message_channel::MessageChannel;
+use vscfreedev_core::port_forward::{PortForwardManager, PortForwardMessage};
 
 /// Remote server for vscfreedev
 #[derive(Parser, Debug)]
@@ -98,8 +101,10 @@ async fn handle_messages<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
 ) -> Result<()> {
     debug!("REMOTE_SERVER_LOG: handle_messages starting");
 
-    for i in 0..10 {
-        // Limit iterations to avoid infinite hang
+    let port_forward_manager = Arc::new(PortForwardManager::new());
+
+    for i in 0..50 {
+        // Increased iterations to handle multiple port forward requests
         debug!(
             "REMOTE_SERVER_LOG: Waiting for message... (iteration {})",
             i
@@ -117,17 +122,51 @@ async fn handle_messages<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
                 let message_str = String::from_utf8_lossy(&message);
                 info!("Received message: {}", message_str);
 
-                // Echo the message back
-                let echo_msg = format!("Echo: {}", message_str);
-                debug!("REMOTE_SERVER_LOG: Preparing to send echo: {}", echo_msg);
+                // Try to parse as port forward message first
+                if let Ok(port_forward_msg) =
+                    serde_json::from_str::<PortForwardMessage>(&message_str)
+                {
+                    debug!(
+                        "REMOTE_SERVER_LOG: Parsed as port forward message: {:?}",
+                        port_forward_msg
+                    );
 
-                match message_channel.send(bytes::Bytes::from(echo_msg)).await {
-                    Ok(_) => {
-                        debug!("REMOTE_SERVER_LOG: Echo sent successfully");
+                    let response =
+                        handle_port_forward_message(port_forward_msg, &port_forward_manager).await;
+                    let response_json = serde_json::to_string(&response)?;
+
+                    debug!(
+                        "REMOTE_SERVER_LOG: Sending port forward response: {}",
+                        response_json
+                    );
+                    match message_channel.send(Bytes::from(response_json)).await {
+                        Ok(_) => {
+                            debug!("REMOTE_SERVER_LOG: Port forward response sent successfully");
+                        }
+                        Err(e) => {
+                            error!(
+                                "REMOTE_SERVER_ERROR: Failed to send port forward response: {}",
+                                e
+                            );
+                            return Err(anyhow::anyhow!(
+                                "Failed to send port forward response: {}",
+                                e
+                            ));
+                        }
                     }
-                    Err(e) => {
-                        error!("REMOTE_SERVER_ERROR: Failed to send echo: {}", e);
-                        return Err(anyhow::anyhow!("Failed to send echo: {}", e));
+                } else {
+                    // Handle as regular echo message for backward compatibility
+                    let echo_msg = format!("Echo: {}", message_str);
+                    debug!("REMOTE_SERVER_LOG: Preparing to send echo: {}", echo_msg);
+
+                    match message_channel.send(bytes::Bytes::from(echo_msg)).await {
+                        Ok(_) => {
+                            debug!("REMOTE_SERVER_LOG: Echo sent successfully");
+                        }
+                        Err(e) => {
+                            error!("REMOTE_SERVER_ERROR: Failed to send echo: {}", e);
+                            return Err(anyhow::anyhow!("Failed to send echo: {}", e));
+                        }
                     }
                 }
             }
@@ -143,6 +182,82 @@ async fn handle_messages<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
     }
 
     Ok(())
+}
+
+async fn handle_port_forward_message(
+    message: PortForwardMessage,
+    manager: &Arc<PortForwardManager>,
+) -> PortForwardMessage {
+    match message {
+        PortForwardMessage::StartRequest {
+            local_port,
+            remote_host,
+            remote_port,
+        } => {
+            info!(
+                "Starting port forward: {} -> {}:{}",
+                local_port, remote_host, remote_port
+            );
+
+            // For remote side, we actually want to connect to the local service
+            // and forward it back to the client's local port
+            match manager
+                .start_forward(local_port, remote_host.clone(), remote_port)
+                .await
+            {
+                Ok(_) => {
+                    info!(
+                        "Port forward started successfully: {} -> {}:{}",
+                        local_port, remote_host, remote_port
+                    );
+                    PortForwardMessage::StartResponse {
+                        local_port,
+                        success: true,
+                        error: None,
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to start port forward: {}", e);
+                    PortForwardMessage::StartResponse {
+                        local_port,
+                        success: false,
+                        error: Some(e.to_string()),
+                    }
+                }
+            }
+        }
+        PortForwardMessage::StopRequest { local_port } => {
+            info!("Stopping port forward for port {}", local_port);
+
+            match manager.stop_forward(local_port).await {
+                Ok(_) => {
+                    info!("Port forward stopped successfully for port {}", local_port);
+                    PortForwardMessage::StopResponse {
+                        local_port,
+                        success: true,
+                        error: None,
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to stop port forward: {}", e);
+                    PortForwardMessage::StopResponse {
+                        local_port,
+                        success: false,
+                        error: Some(e.to_string()),
+                    }
+                }
+            }
+        }
+        // Other message types would be handled here for full implementation
+        _ => {
+            warn!("Unhandled port forward message type");
+            PortForwardMessage::StartResponse {
+                local_port: 0,
+                success: false,
+                error: Some("Unhandled message type".to_string()),
+            }
+        }
+    }
 }
 
 /// Simple binary I/O test to check if the issue is with StdioAdapter
