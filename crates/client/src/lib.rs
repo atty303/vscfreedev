@@ -12,6 +12,9 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::{mpsc, Mutex};
 use vscfreedev_core::message_channel::MessageChannel;
 
+/// Path to the remote binary built by build.rs
+pub const REMOTE_BINARY_PATH: &str = env!("VSCFREEDEV_REMOTE_BINARY_PATH");
+
 /// Error types for the client
 #[derive(thiserror::Error, Debug)]
 pub enum ClientError {
@@ -267,5 +270,10 @@ pub mod client {
         let message_channel = MessageChannel::new_with_stream(ssh_adapter);
 
         Ok(message_channel)
+    }
+
+    /// Get the path to the built remote binary
+    pub fn get_remote_binary_path() -> &'static str {
+        REMOTE_BINARY_PATH
     }
 }

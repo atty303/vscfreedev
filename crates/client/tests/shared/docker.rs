@@ -2,7 +2,6 @@
 
 use anyhow::{Context, Result};
 use rand::Rng;
-use std::path::Path;
 use std::time::Duration;
 use tokio::fs;
 use tokio::process::Command;
@@ -56,7 +55,8 @@ impl RemoteContainer {
         fs::write(&dockerfile_path, DOCKERFILE).await?;
 
         // Copy the remote server binary to the build context
-        let remote_binary_path = Path::new("../../target/x86_64-unknown-linux-gnu/debug/vscfreedev-remote");
+        // Use the path from the build script
+        let remote_binary_path = vscfreedev_client::REMOTE_BINARY_PATH;
         let dest_path = temp_dir.path().join("vscfreedev_remote");
         fs::copy(remote_binary_path, &dest_path)
             .await
