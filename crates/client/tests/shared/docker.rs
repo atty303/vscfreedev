@@ -46,8 +46,8 @@ impl RemoteContainer {
     /// Create a new RemoteContainer
     pub async fn new() -> Result<Self> {
         // Generate a random container name
-        let mut rng = rand::thread_rng();
-        let random_suffix: u32 = rng.gen_range(10000..99999);
+        let mut rng = rand::rng();
+        let random_suffix: u32 = rng.random_range(10000..99999);
         let container_name = format!("vscfreedev-remote-test-{}", random_suffix);
 
         // Create a temporary directory for the Docker build context

@@ -10,7 +10,6 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::TcpStream as TokioTcpStream;
 use tokio::time;
 use vscfreedev_core::message_channel::{ChannelHandle, MessageChannel, Multiplexer};
 
@@ -64,20 +63,26 @@ impl AsyncRead for SshChannelAdapter {
         let unfilled = buf.initialize_unfilled();
         match channel.read(unfilled) {
             Ok(0) => {
-                // Reading 0 bytes typically indicates that the channel has been closed
-                // But instead of returning an error, we'll yield and try again later
-                // This prevents the channel from being closed prematurely
-                cx.waker().wake_by_ref();
-                Poll::Pending
+                // Reading 0 bytes indicates EOF, return EOF error
+                println!("SshChannelAdapter::poll_read got 0 bytes (EOF)");
+                Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "SSH channel EOF",
+                )))
             }
             Ok(n) => {
+                println!("SshChannelAdapter::poll_read read {} bytes", n);
                 buf.advance(n);
                 Poll::Ready(Ok(()))
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                println!("SshChannelAdapter::poll_read would block, yielding");
                 // SSH2 doesn't support async I/O, so we need to yield and try again later
-                cx.waker().wake_by_ref();
+                // Use a small delay to avoid busy waiting
+                let waker = cx.waker().clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                    waker.wake();
+                });
                 Poll::Pending
             }
             Err(e) => {
@@ -110,6 +115,10 @@ impl AsyncWrite for SshChannelAdapter {
         match channel.write(buf) {
             Ok(n) => {
                 println!("SshChannelAdapter::poll_write wrote {} bytes", n);
+                if n > 0 {
+                    // Log the actual data written for debugging
+                    println!("SshChannelAdapter::poll_write data: {:?}", &buf[..n]);
+                }
 
                 // Try to flush the channel after writing
                 if let Err(e) = channel.flush() {
@@ -120,9 +129,13 @@ impl AsyncWrite for SshChannelAdapter {
                 Poll::Ready(Ok(n))
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                println!("SshChannelAdapter::poll_write would block, yielding");
                 // SSH2 doesn't support async I/O, so we need to yield and try again later
-                cx.waker().wake_by_ref();
+                // Use a small delay to avoid busy waiting
+                let waker = cx.waker().clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                    waker.wake();
+                });
                 Poll::Pending
             }
             Err(e) => {
@@ -148,12 +161,27 @@ impl AsyncWrite for SshChannelAdapter {
     ) -> Poll<std::io::Result<()>> {
         println!("SshChannelAdapter::poll_shutdown called");
 
-        // Don't send EOF here as it can cause the channel to close prematurely
-        // before we've had a chance to receive the response.
-        // In SSH, sending EOF signals that no more data will be sent, which can
-        // cause the remote side to close the channel.
+        let mut channel = match self.channel.lock() {
+            Ok(channel) => channel,
+            Err(e) => {
+                println!("ERROR: Failed to lock SSH channel for shutdown: {:?}", e);
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Failed to lock SSH channel",
+                )));
+            }
+        };
 
-        println!("SshChannelAdapter::poll_shutdown - not sending EOF to keep channel open");
+        // Send EOF to signal that we're done writing
+        println!("SshChannelAdapter::poll_shutdown - sending EOF");
+        if let Err(e) = channel.send_eof() {
+            println!("ERROR: SshChannelAdapter::poll_shutdown EOF error: {:?}", e);
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("SSH EOF error: {}", e),
+            )));
+        }
+
         Poll::Ready(Ok(()))
     }
 }

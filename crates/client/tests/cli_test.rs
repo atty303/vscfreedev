@@ -83,6 +83,9 @@ async fn test_ssh_connection() -> Result<()> {
         return Err(anyhow::anyhow!("Failed to send message: {}", e));
     }
 
+    // Add a small delay to allow the message to be fully sent
+    sleep(Duration::from_secs(1)).await;
+
     // Try to receive the response with a timeout
     let response = match tokio::time::timeout(Duration::from_secs(20), channel.receive()).await {
         Ok(result) => match result {

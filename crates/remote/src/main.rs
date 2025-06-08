@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::Parser;
 use std::io::{self, Read, Write};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -41,17 +40,22 @@ impl StdioAdapter {
                 match stdin.read(&mut buffer) {
                     Ok(0) => {
                         // EOF
-                        if read_tx.blocking_send(Err(io::Error::new(io::ErrorKind::UnexpectedEof, "EOF from stdin"))).is_err() {
-                            // Channel closed, exit thread
-                            break;
-                        }
+                        eprintln!("REMOTE_SERVER_LOG: StdioAdapter read thread: EOF from stdin");
+                        // Exit thread on EOF to avoid infinite loop
+                        break;
                     }
                     Ok(n) => {
                         // Data read
+                        eprintln!("REMOTE_SERVER_LOG: StdioAdapter read thread: Read {} bytes from stdin", n);
                         if read_tx.blocking_send(Ok(buffer[..n].to_vec())).is_err() {
                             // Channel closed, exit thread
                             break;
                         }
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        // No data available, sleep and try again
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        continue;
                     }
                     Err(e) => {
                         // Error
@@ -98,7 +102,7 @@ impl StdioAdapter {
 
 impl AsyncRead for StdioAdapter {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
@@ -148,11 +152,11 @@ impl AsyncRead for StdioAdapter {
                 Poll::Pending
             }
             Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                // Channel closed
-                eprintln!("REMOTE_SERVER_ERROR: StdioAdapter::poll_read channel closed");
+                // Channel closed, likely due to EOF
+                eprintln!("REMOTE_SERVER_LOG: StdioAdapter::poll_read channel closed due to EOF");
                 Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "Read channel closed",
+                    io::ErrorKind::UnexpectedEof,
+                    "EOF from stdin",
                 )))
             }
         }
@@ -161,7 +165,7 @@ impl AsyncRead for StdioAdapter {
 
 impl AsyncWrite for StdioAdapter {
     fn poll_write(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
@@ -253,7 +257,7 @@ impl AsyncWrite for StdioAdapter {
     }
 
     fn poll_flush(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
         // Get a mutable reference to self
