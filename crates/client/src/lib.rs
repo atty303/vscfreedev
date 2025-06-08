@@ -38,6 +38,11 @@ pub struct SshChannelAdapter {
 impl SshChannelAdapter {
     /// Create a new SSH channel adapter
     pub fn new(channel: SshChannel) -> Self {
+        println!("Creating new SshChannelAdapter");
+
+        // Just log that we're creating a new adapter
+        println!("SSH channel adapter created");
+
         Self {
             channel: Arc::new(Mutex::new(channel)),
         }
@@ -50,26 +55,36 @@ impl AsyncRead for SshChannelAdapter {
         cx: &mut TaskContext<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
+        println!("SshChannelAdapter::poll_read called");
+
         let mut channel = match self.channel.lock() {
             Ok(channel) => channel,
-            Err(_) => return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Failed to lock SSH channel",
-            ))),
+            Err(e) => {
+                println!("ERROR: Failed to lock SSH channel for read: {:?}", e);
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Failed to lock SSH channel",
+                )));
+            }
         };
 
         let unfilled = buf.initialize_unfilled();
         match channel.read(unfilled) {
             Ok(n) => {
+                println!("SshChannelAdapter::poll_read read {} bytes", n);
                 buf.advance(n);
                 Poll::Ready(Ok(()))
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                println!("SshChannelAdapter::poll_read would block, yielding");
                 // SSH2 doesn't support async I/O, so we need to yield and try again later
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            Err(e) => Poll::Ready(Err(e)),
+            Err(e) => {
+                println!("ERROR: SshChannelAdapter::poll_read error: {:?}", e);
+                Poll::Ready(Err(e))
+            }
         }
     }
 }
@@ -80,22 +95,34 @@ impl AsyncWrite for SshChannelAdapter {
         cx: &mut TaskContext<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
+        println!("SshChannelAdapter::poll_write called with {} bytes", buf.len());
+
         let mut channel = match self.channel.lock() {
             Ok(channel) => channel,
-            Err(_) => return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Failed to lock SSH channel",
-            ))),
+            Err(e) => {
+                println!("ERROR: Failed to lock SSH channel for write: {:?}", e);
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Failed to lock SSH channel",
+                )));
+            }
         };
 
         match channel.write(buf) {
-            Ok(n) => Poll::Ready(Ok(n)),
+            Ok(n) => {
+                println!("SshChannelAdapter::poll_write wrote {} bytes", n);
+                Poll::Ready(Ok(n))
+            }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                println!("SshChannelAdapter::poll_write would block, yielding");
                 // SSH2 doesn't support async I/O, so we need to yield and try again later
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            Err(e) => Poll::Ready(Err(e)),
+            Err(e) => {
+                println!("ERROR: SshChannelAdapter::poll_write error: {:?}", e);
+                Poll::Ready(Err(e))
+            }
         }
     }
 
@@ -103,6 +130,8 @@ impl AsyncWrite for SshChannelAdapter {
         self: Pin<&mut Self>,
         _cx: &mut TaskContext<'_>,
     ) -> Poll<std::io::Result<()>> {
+        println!("SshChannelAdapter::poll_flush called");
+
         // SSH2 doesn't have an explicit flush method
         Poll::Ready(Ok(()))
     }
@@ -111,22 +140,29 @@ impl AsyncWrite for SshChannelAdapter {
         self: Pin<&mut Self>,
         _cx: &mut TaskContext<'_>,
     ) -> Poll<std::io::Result<()>> {
+        println!("SshChannelAdapter::poll_shutdown called");
+
         let mut channel = match self.channel.lock() {
             Ok(channel) => channel,
-            Err(_) => return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Failed to lock SSH channel",
-            ))),
+            Err(e) => {
+                println!("ERROR: Failed to lock SSH channel for shutdown: {:?}", e);
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Failed to lock SSH channel",
+                )));
+            }
         };
 
         // Send EOF to indicate we're done writing
         if let Err(e) = channel.send_eof() {
+            println!("ERROR: Failed to send EOF: {}", e);
             return Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 format!("Failed to send EOF: {}", e),
             )));
         }
 
+        println!("SshChannelAdapter::poll_shutdown sent EOF");
         Poll::Ready(Ok(()))
     }
 }
@@ -215,10 +251,117 @@ pub mod client {
             return Err(anyhow::anyhow!("Failed to make executable executable: {}", output));
         }
 
-        // Start the remote executable with standard I/O
+        // First run a simple command to check if SSH is working correctly
+        let mut test_channel = sess.channel_session().context("Failed to create SSH channel for test")?;
+        println!("Running test command...");
+        test_channel.exec("echo 'SSH connection test' && ls -la /usr/local/bin/vscfreedev_remote")
+            .context("Failed to run test command")?;
+
+        // Read the output with a timeout
+        let mut test_output = String::new();
+        time::timeout(
+            Duration::from_secs(10),
+            async {
+                test_channel.read_to_string(&mut test_output)?;
+                test_channel.wait_close()?;
+                Ok::<_, anyhow::Error>(())
+            }
+        ).await.context("Timeout waiting for test command to complete")??;
+
+        println!("Test command output: {}", test_output);
+
+        if test_channel.exit_status()? != 0 {
+            return Err(anyhow::anyhow!("Test command failed: {}", test_output));
+        }
+
+        // First try to run the remote executable with --help to see if it works
+        let mut help_channel = sess.channel_session().context("Failed to create SSH channel for help")?;
+        println!("Running remote executable with --help...");
+        help_channel.exec(&format!("{} --help > /tmp/remote_help.txt 2>&1", remote_path))
+            .context("Failed to run remote executable with --help")?;
+
+        // Read the output with a timeout
+        let mut help_output = String::new();
+        time::timeout(
+            Duration::from_secs(10),
+            async {
+                help_channel.read_to_string(&mut help_output)?;
+                help_channel.wait_close()?;
+                Ok::<_, anyhow::Error>(())
+            }
+        ).await.context("Timeout waiting for help command to complete")??;
+
+        println!("Help command exit status: {}", help_channel.exit_status()?);
+
+        // Now run a command to check if the remote executable exists and is executable
+        let mut check_channel = sess.channel_session().context("Failed to create SSH channel for check")?;
+        println!("Checking remote executable...");
+        check_channel.exec(&format!("ls -la {} && file {}", remote_path, remote_path))
+            .context("Failed to check remote executable")?;
+
+        // Read the output with a timeout
+        let mut check_output = String::new();
+        time::timeout(
+            Duration::from_secs(10),
+            async {
+                check_channel.read_to_string(&mut check_output)?;
+                check_channel.wait_close()?;
+                Ok::<_, anyhow::Error>(())
+            }
+        ).await.context("Timeout waiting for check command to complete")??;
+
+        println!("Check command output: {}", check_output);
+
+        // Start the remote executable with standard I/O and verbose output
         let mut channel = sess.channel_session().context("Failed to create SSH channel")?;
-        channel.exec(&remote_path)
+        println!("Starting remote executable: {}", remote_path);
+
+        // Set up the channel for bidirectional communication
+        channel.request_pty("xterm", None, None)?;
+
+        // Run the remote executable with verbose output
+        // Note: We're not using --stdio flag because the remote server in the Docker container
+        // might be an older version that doesn't recognize this flag
+        channel.exec(&format!("{} -s 2>/tmp/remote_stderr.log", remote_path))
             .context("Failed to start remote executable")?;
+        println!("Remote executable started");
+
+        // Check if the channel is still open by trying to read from it
+        let mut buf = [0u8; 1];
+        match channel.read(&mut buf) {
+            Ok(0) => {
+                println!("WARNING: SSH channel EOF after starting remote executable");
+
+                // Try to get the stderr log
+                let mut stderr_check = sess.channel_session().context("Failed to create SSH channel for stderr check")?;
+                stderr_check.exec("cat /tmp/remote_stderr.log")?;
+                let mut stderr_output = String::new();
+                stderr_check.read_to_string(&mut stderr_output)?;
+                println!("Remote stderr log: {}", stderr_output);
+
+                return Err(anyhow::anyhow!("SSH channel EOF immediately after starting remote executable"));
+            },
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::WouldBlock {
+                    // This is expected for a non-blocking channel
+                    println!("SSH channel would block, which is expected");
+                } else {
+                    println!("WARNING: SSH channel error after starting remote executable: {}", e);
+
+                    // Try to get the stderr log
+                    let mut stderr_check = sess.channel_session().context("Failed to create SSH channel for stderr check")?;
+                    stderr_check.exec("cat /tmp/remote_stderr.log")?;
+                    let mut stderr_output = String::new();
+                    stderr_check.read_to_string(&mut stderr_output)?;
+                    println!("Remote stderr log: {}", stderr_output);
+
+                    return Err(anyhow::anyhow!("SSH channel error immediately after starting remote executable: {}", e));
+                }
+            },
+            Ok(_) => {
+                println!("WARNING: Unexpected data from SSH channel after starting remote executable");
+            }
+        }
 
         // Create an adapter for the SSH channel
         let ssh_adapter = SshChannelAdapter::new(channel);

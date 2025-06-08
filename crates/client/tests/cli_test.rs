@@ -35,11 +35,29 @@ async fn test_ssh_connection() -> Result<()> {
             Ok(msg) => msg,
             Err(e) => {
                 println!("Error receiving welcome message: {}", e);
+
+                // Get and display container logs for debugging
+                println!("---- Remote container logs ----");
+                match container.get_logs().await {
+                    Ok(logs) => println!("{}", logs),
+                    Err(log_err) => println!("Error getting container logs: {}", log_err),
+                }
+                println!("---- End of remote container logs ----");
+
                 return Err(anyhow::anyhow!("Failed to receive welcome message: {}", e));
             }
         },
         Err(_) => {
             println!("Timeout waiting for welcome message");
+
+            // Get and display container logs for debugging
+            println!("---- Remote container logs ----");
+            match container.get_logs().await {
+                Ok(logs) => println!("{}", logs),
+                Err(log_err) => println!("Error getting container logs: {}", log_err),
+            }
+            println!("---- End of remote container logs ----");
+
             return Err(anyhow::anyhow!("Timeout waiting for welcome message"));
         }
     };
@@ -64,11 +82,29 @@ async fn test_ssh_connection() -> Result<()> {
             Ok(msg) => msg,
             Err(e) => {
                 println!("Error receiving response: {}", e);
+
+                // Get and display container logs for debugging
+                println!("---- Remote container logs ----");
+                match container.get_logs().await {
+                    Ok(logs) => println!("{}", logs),
+                    Err(log_err) => println!("Error getting container logs: {}", log_err),
+                }
+                println!("---- End of remote container logs ----");
+
                 return Err(anyhow::anyhow!("Failed to receive response: {}", e));
             }
         },
         Err(_) => {
             println!("Timeout waiting for response");
+
+            // Get and display container logs for debugging
+            println!("---- Remote container logs ----");
+            match container.get_logs().await {
+                Ok(logs) => println!("{}", logs),
+                Err(log_err) => println!("Error getting container logs: {}", log_err),
+            }
+            println!("---- End of remote container logs ----");
+
             return Err(anyhow::anyhow!("Timeout waiting for response"));
         }
     };

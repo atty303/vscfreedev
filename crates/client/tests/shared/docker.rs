@@ -19,7 +19,8 @@ RUN apt-get update && \
     apt-get install -y openssh-server && \
     mkdir -p /run/sshd && \
     echo 'root:password' | chpasswd && \
-    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#LogLevel INFO/LogLevel DEBUG/' /etc/ssh/sshd_config
 
 # Copy the remote server binary
 COPY vscfreedev_remote /usr/local/bin/
@@ -27,8 +28,11 @@ COPY vscfreedev_remote /usr/local/bin/
 # Expose SSH port
 EXPOSE 22
 
+# Create a directory for logs
+RUN mkdir -p /var/log/vscfreedev
+
 # Start SSH server only, remote server will be started via SSH
-RUN echo '#!/bin/bash\n/usr/sbin/sshd\necho "SSH server started"\nwhile true; do sleep 1; done' > /start.sh && \
+RUN echo '#!/bin/bash\n/usr/sbin/sshd -E /var/log/sshd.log\necho "SSH server started"\necho "Waiting for remote server files..."\nwhile true; do\n  if [ -f /tmp/remote_help.txt ]; then\n    echo "=== Remote Server Help File ==="\n    cat /tmp/remote_help.txt\n    echo "=============================="\n    break\n  fi\n  sleep 1\ndone\ntail -f /var/log/sshd.log /tmp/remote.log /tmp/remote_fallback.log /tmp/remote_panic.log /tmp/remote_stderr.log /tmp/remote_panic.txt /tmp/remote_startup.txt /tmp/remote_help.txt 2>/dev/null || true\nwhile true; do sleep 1; done' > /start.sh && \
     chmod +x /start.sh
 CMD ["/start.sh"]
 "#;
@@ -99,6 +103,27 @@ impl RemoteContainer {
         sleep(Duration::from_secs(2)).await;
 
         Ok(Self { container_name })
+    }
+
+    /// Get the logs from the container
+    pub async fn get_logs(&self) -> Result<String> {
+        let output = Command::new("docker")
+            .args([
+                "logs",
+                &self.container_name,
+            ])
+            .output()
+            .await
+            .context("Failed to get container logs")?;
+
+        if !output.status.success() {
+            anyhow::bail!("Docker logs command failed");
+        }
+
+        let logs = String::from_utf8(output.stdout)
+            .context("Failed to parse container logs")?;
+
+        Ok(logs)
     }
 
     /// Get the SSH port for the container
