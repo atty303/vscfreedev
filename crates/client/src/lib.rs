@@ -1,11 +1,15 @@
 //! Client-side library for vscfreedev
 
 use anyhow::{Context, Result};
-use ssh2::Session;
+use ssh2::{Channel as SshChannel, Session};
 use std::io::{Read, Write};
 use std::net::{TcpStream};
 use std::path::Path;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream as TokioTcpStream;
 use tokio::time;
 use vscfreedev_core::message_channel::{ChannelHandle, MessageChannel, Multiplexer};
@@ -26,6 +30,107 @@ pub enum ClientError {
     RemoteExecution(String),
 }
 
+/// An adapter that implements AsyncRead and AsyncWrite for an SSH channel
+pub struct SshChannelAdapter {
+    channel: Arc<Mutex<SshChannel>>,
+}
+
+impl SshChannelAdapter {
+    /// Create a new SSH channel adapter
+    pub fn new(channel: SshChannel) -> Self {
+        Self {
+            channel: Arc::new(Mutex::new(channel)),
+        }
+    }
+}
+
+impl AsyncRead for SshChannelAdapter {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let mut channel = match self.channel.lock() {
+            Ok(channel) => channel,
+            Err(_) => return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Failed to lock SSH channel",
+            ))),
+        };
+
+        let unfilled = buf.initialize_unfilled();
+        match channel.read(unfilled) {
+            Ok(n) => {
+                buf.advance(n);
+                Poll::Ready(Ok(()))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // SSH2 doesn't support async I/O, so we need to yield and try again later
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            Err(e) => Poll::Ready(Err(e)),
+        }
+    }
+}
+
+impl AsyncWrite for SshChannelAdapter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let mut channel = match self.channel.lock() {
+            Ok(channel) => channel,
+            Err(_) => return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Failed to lock SSH channel",
+            ))),
+        };
+
+        match channel.write(buf) {
+            Ok(n) => Poll::Ready(Ok(n)),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // SSH2 doesn't support async I/O, so we need to yield and try again later
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            Err(e) => Poll::Ready(Err(e)),
+        }
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        _cx: &mut TaskContext<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        // SSH2 doesn't have an explicit flush method
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        _cx: &mut TaskContext<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let mut channel = match self.channel.lock() {
+            Ok(channel) => channel,
+            Err(_) => return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Failed to lock SSH channel",
+            ))),
+        };
+
+        // Send EOF to indicate we're done writing
+        if let Err(e) = channel.send_eof() {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to send EOF: {}", e),
+            )));
+        }
+
+        Poll::Ready(Ok(()))
+    }
+}
+
 /// Client implementation
 pub mod client {
     use super::*;
@@ -44,16 +149,29 @@ pub mod client {
         password: Option<&str>,
         key_path: Option<&Path>,
     ) -> Result<ChannelHandle> {
-        // Build the remote executable
-        let remote_executable_path = build_remote_executable().await?;
+        // Build the remote executable with a timeout
+        let remote_executable_path = time::timeout(
+            Duration::from_secs(30),
+            build_remote_executable()
+        ).await.context("Timeout building remote executable")??;
 
         // Connect to the SSH server
+        // Note: TcpStream::connect is not async, so we can't use timeout directly
         let tcp = TcpStream::connect((host, port))
             .with_context(|| format!("Failed to connect to {}:{}", host, port))?;
+
+        // Set a timeout for the TCP connection
+        tcp.set_read_timeout(Some(Duration::from_secs(30)))?;
+        tcp.set_write_timeout(Some(Duration::from_secs(30)))?;
 
         // Create an SSH session
         let mut sess = Session::new().context("Failed to create SSH session")?;
         sess.set_tcp_stream(tcp);
+
+        // Set a timeout for the SSH session
+        sess.set_timeout(30000); // 30 seconds in milliseconds
+
+        // Perform SSH handshake
         sess.handshake().context("SSH handshake failed")?;
 
         // Authenticate
@@ -69,42 +187,56 @@ pub mod client {
                 .context("Agent authentication failed")?;
         }
 
-        // Upload the remote executable
-        let remote_path = upload_executable(&sess, &remote_executable_path).context("Failed to upload executable")?;
+        // Upload the remote executable with a timeout
+        let remote_path = time::timeout(
+            Duration::from_secs(60), // Uploading might take longer
+            async {
+                upload_executable(&sess, &remote_executable_path).context("Failed to upload executable")
+            }
+        ).await.context("Timeout uploading executable")??;
 
         // Make the remote executable executable
         let mut channel = sess.channel_session().context("Failed to create SSH channel")?;
         channel.exec(&format!("chmod +x {}", remote_path))
             .context("Failed to make executable executable")?;
+
+        // Read the output with a timeout
         let mut output = String::new();
-        channel.read_to_string(&mut output)?;
-        channel.wait_close()?;
+        time::timeout(
+            Duration::from_secs(10),
+            async {
+                channel.read_to_string(&mut output)?;
+                channel.wait_close()?;
+                Ok::<_, anyhow::Error>(())
+            }
+        ).await.context("Timeout waiting for chmod command to complete")??;
+
         if channel.exit_status()? != 0 {
             return Err(anyhow::anyhow!("Failed to make executable executable: {}", output));
         }
 
-        // Start the remote executable
-        let remote_port = 9999; // Default port
+        // Start the remote executable with standard I/O
         let mut channel = sess.channel_session().context("Failed to create SSH channel")?;
-        channel.exec(&format!("{} --port {}", remote_path, remote_port))
+        channel.exec(&remote_path)
             .context("Failed to start remote executable")?;
 
-        // Wait a bit for the remote executable to start
-        time::sleep(Duration::from_secs(2)).await;
+        // Create an adapter for the SSH channel
+        let ssh_adapter = SshChannelAdapter::new(channel);
 
-        // Connect to the remote executable via TCP
-        let remote_addr = format!("127.0.0.1:{}", remote_port);
-        let stream = TokioTcpStream::connect(&remote_addr).await
-            .with_context(|| format!("Failed to connect to remote executable at {}", remote_addr))?;
-
-        // Create a message channel
-        let message_channel = MessageChannel::new(stream);
+        // Create a message channel using the SSH channel adapter
+        let message_channel = MessageChannel::new_with_stream(ssh_adapter);
 
         // Create a multiplexer
         let multiplexer = Multiplexer::new(message_channel);
 
-        // Create a channel for communication
-        let channel = multiplexer.lock().await.create_channel().await?;
+        // Create a channel for communication with a timeout
+        let channel = time::timeout(
+            Duration::from_secs(30),
+            async {
+                let mut lock = multiplexer.lock().await;
+                lock.create_channel().await
+            }
+        ).await.context("Timeout creating communication channel")??;
 
         Ok(channel)
     }

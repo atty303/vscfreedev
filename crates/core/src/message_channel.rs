@@ -59,6 +59,13 @@ impl MessageChannel<TcpStream> {
 }
 
 impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
+    /// Create a new message channel from any stream that implements AsyncRead + AsyncWrite + Unpin
+    pub fn new_with_stream(stream: T) -> Self {
+        Self {
+            inner: stream,
+            read_buffer: BytesMut::with_capacity(4096),
+        }
+    }
     /// Send a message over the channel
     pub async fn send(&mut self, message: Message) -> Result<()> {
         let Message {
@@ -111,8 +118,13 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
                 }
             }
 
-            // Read more data into the buffer
-            let bytes_read = self.inner.read_buf(&mut self.read_buffer).await?;
+            // Read more data into the buffer with a timeout
+            let read_future = self.inner.read_buf(&mut self.read_buffer);
+            let bytes_read = match tokio::time::timeout(std::time::Duration::from_secs(30), read_future).await {
+                Ok(result) => result?,
+                Err(_) => return Err(ChannelError::Protocol("Timeout waiting for data".to_string())),
+            };
+
             if bytes_read == 0 {
                 return Err(ChannelError::Closed);
             }
@@ -141,11 +153,12 @@ impl ChannelHandle {
 
     /// Receive data from this channel
     pub async fn receive(&mut self) -> Result<Bytes> {
-        self.receiver
-            .recv()
-            .await
-            .map(|msg| msg.payload)
-            .ok_or(ChannelError::Closed)
+        match tokio::time::timeout(std::time::Duration::from_secs(30), self.receiver.recv()).await {
+            Ok(result) => result
+                .map(|msg| msg.payload)
+                .ok_or(ChannelError::Closed),
+            Err(_) => Err(ChannelError::Protocol("Timeout waiting for message".to_string())),
+        }
     }
 }
 
@@ -191,9 +204,18 @@ impl Multiplexer {
                 tokio::select! {
                     // Process outgoing messages
                     Some(message) = outgoing_rx.recv() => {
-                        if let Err(e) = message_channel.send(message).await {
-                            eprintln!("Error sending message: {}", e);
-                            break;
+                        // Add a timeout to the send operation
+                        match tokio::time::timeout(std::time::Duration::from_secs(30), message_channel.send(message)).await {
+                            Ok(result) => {
+                                if let Err(e) = result {
+                                    eprintln!("Error sending message: {}", e);
+                                    break;
+                                }
+                            },
+                            Err(_) => {
+                                eprintln!("Timeout sending message");
+                                break;
+                            }
                         }
                     }
 
@@ -204,11 +226,35 @@ impl Multiplexer {
                                 // Store the channel_id before moving the message
                                 let channel_id = message.channel_id;
 
-                                let mut multiplexer = multiplexer_clone.lock().await;
-                                if let Some(sender) = multiplexer.channels.get(&channel_id) {
-                                    if let Err(_) = sender.send(message).await {
-                                        // Channel was closed, remove it
-                                        multiplexer.channels.remove(&channel_id);
+                                // Add a timeout to the lock operation
+                                let multiplexer_lock_result = tokio::time::timeout(
+                                    std::time::Duration::from_secs(5), 
+                                    multiplexer_clone.lock()
+                                ).await;
+
+                                match multiplexer_lock_result {
+                                    Ok(mut multiplexer) => {
+                                        if let Some(sender) = multiplexer.channels.get(&channel_id) {
+                                            // Add a timeout to the send operation
+                                            match tokio::time::timeout(
+                                                std::time::Duration::from_secs(5),
+                                                sender.send(message)
+                                            ).await {
+                                                Ok(send_result) => {
+                                                    if send_result.is_err() {
+                                                        // Channel was closed, remove it
+                                                        multiplexer.channels.remove(&channel_id);
+                                                    }
+                                                },
+                                                Err(_) => {
+                                                    eprintln!("Timeout sending message to channel");
+                                                    multiplexer.channels.remove(&channel_id);
+                                                }
+                                            }
+                                        }
+                                    },
+                                    Err(_) => {
+                                        eprintln!("Timeout acquiring multiplexer lock");
                                     }
                                 }
                             }

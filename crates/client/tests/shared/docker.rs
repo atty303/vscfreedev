@@ -24,11 +24,11 @@ RUN apt-get update && \
 # Copy the remote server binary
 COPY vscfreedev_remote /usr/local/bin/
 
-# Expose SSH port and remote server port
-EXPOSE 22 9999
+# Expose SSH port
+EXPOSE 22
 
-# Start SSH server and the remote server
-RUN echo '#!/bin/bash\n/usr/sbin/sshd\nvscfreedev_remote --port 9999 --host 0.0.0.0 &\necho "Remote server started on port 9999"\nwhile true; do sleep 1; done' > /start.sh && \
+# Start SSH server only, remote server will be started via SSH
+RUN echo '#!/bin/bash\n/usr/sbin/sshd\necho "SSH server started"\nwhile true; do sleep 1; done' > /start.sh && \
     chmod +x /start.sh
 CMD ["/start.sh"]
 "#;
@@ -106,10 +106,7 @@ impl RemoteContainer {
         self.get_mapped_port("22/tcp").await
     }
 
-    /// Get the remote executable port for the container
-    pub async fn remote_port(&self) -> Result<u16> {
-        self.get_mapped_port("9999/tcp").await
-    }
+    // Remote port is no longer needed as we're using SSH standard I/O
 
     /// Get a mapped port for the container
     async fn get_mapped_port(&self, port_spec: &str) -> Result<u16> {

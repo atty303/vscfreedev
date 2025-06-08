@@ -9,13 +9,12 @@ use vscfreedev_client::client;
 
 #[tokio::test]
 async fn test_ssh_connection() -> Result<()> {
-    // Start the Docker container with the remote server
+    // Start the Docker container with the SSH server
     let container = RemoteContainer::new().await?;
     let ssh_port = container.ssh_port().await?;
-    let remote_port = container.remote_port().await?;
 
     // Wait a bit for the SSH server and remote executable to be fully ready
-    sleep(Duration::from_secs(5)).await;
+    sleep(Duration::from_secs(10)).await;
 
     // Connect directly using client::connect_ssh
     println!("Connecting to 127.0.0.1:{} as root", ssh_port);
@@ -31,7 +30,7 @@ async fn test_ssh_connection() -> Result<()> {
     println!("Remote channel established");
 
     // Try to receive the welcome message with a timeout
-    let welcome = match tokio::time::timeout(Duration::from_secs(5), channel.receive()).await {
+    let welcome = match tokio::time::timeout(Duration::from_secs(20), channel.receive()).await {
         Ok(result) => match result {
             Ok(msg) => msg,
             Err(e) => {
@@ -60,7 +59,7 @@ async fn test_ssh_connection() -> Result<()> {
     }
 
     // Try to receive the response with a timeout
-    let response = match tokio::time::timeout(Duration::from_secs(5), channel.receive()).await {
+    let response = match tokio::time::timeout(Duration::from_secs(20), channel.receive()).await {
         Ok(result) => match result {
             Ok(msg) => msg,
             Err(e) => {
