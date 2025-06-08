@@ -15,10 +15,7 @@ thiserror = { workspace = true }
 russh = { workspace = true }
 russh-keys = { workspace = true }
 async-trait = { workspace = true }
-futures = { workspace = true }
 tracing = { workspace = true }
-
-[build-dependencies]
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -19,10 +19,8 @@ vscfreedev-client = { path = "crates/client" }
 # External dependencies
 anyhow = "1"
 async-trait = "0.1"
-base64 = "0.22"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
-futures = "0.3"
 rand = "0.9"
 russh = "0.52"
 russh-keys = "0.49"
