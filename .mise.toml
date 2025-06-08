@@ -2,6 +2,8 @@
 rust = "latest"
 "cargo:cargo-zigbuild" = "latest"
 zig = "0.14.0"
+hk = "latest"
+pkl = "latest"
 
 [tasks.setup]
 run = [
