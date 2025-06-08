@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use std::io::Write;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{info, debug, warn, error};
+use tracing::{debug, error, info, warn};
 use vscfreedev_core::message_channel::MessageChannel;
 
 /// Remote server for vscfreedev
@@ -30,7 +30,14 @@ async fn main() -> Result<()> {
         .open("/tmp/remote_startup.txt");
 
     if let Ok(mut file) = startup_file {
-        let _ = writeln!(file, "Remote server started at {}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
+        let _ = writeln!(
+            file,
+            "Remote server started at {}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        );
     } else {
         // If we can't write to the file, try to write to stderr
         error!("REMOTE_SERVER_ERROR: Failed to write to startup file");
@@ -65,7 +72,10 @@ async fn main() -> Result<()> {
     if args.stdio {
         info!("Starting vscfreedev remote server using standard I/O");
     } else {
-        info!("Starting vscfreedev remote server using TCP on port {}", args.port);
+        info!(
+            "Starting vscfreedev remote server using TCP on port {}",
+            args.port
+        );
     }
 
     if args.stdio {
@@ -84,15 +94,24 @@ async fn main() -> Result<()> {
 }
 
 async fn handle_messages<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
-    message_channel: &mut MessageChannel<T>
+    message_channel: &mut MessageChannel<T>,
 ) -> Result<()> {
     debug!("REMOTE_SERVER_LOG: handle_messages starting");
-    
-    for i in 0..10 {  // Limit iterations to avoid infinite hang
-        debug!("REMOTE_SERVER_LOG: Waiting for message... (iteration {})", i);
+
+    for i in 0..10 {
+        // Limit iterations to avoid infinite hang
+        debug!(
+            "REMOTE_SERVER_LOG: Waiting for message... (iteration {})",
+            i
+        );
 
         debug!("REMOTE_SERVER_LOG: About to call message_channel.receive()");
-        match tokio::time::timeout(std::time::Duration::from_secs(10), message_channel.receive()).await {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            message_channel.receive(),
+        )
+        .await
+        {
             Ok(Ok(message)) => {
                 debug!("REMOTE_SERVER_LOG: Message received successfully");
                 let message_str = String::from_utf8_lossy(&message);
@@ -105,7 +124,7 @@ async fn handle_messages<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
                 match message_channel.send(bytes::Bytes::from(echo_msg)).await {
                     Ok(_) => {
                         debug!("REMOTE_SERVER_LOG: Echo sent successfully");
-                    },
+                    }
                     Err(e) => {
                         error!("REMOTE_SERVER_ERROR: Failed to send echo: {}", e);
                         return Err(anyhow::anyhow!("Failed to send echo: {}", e));
@@ -129,45 +148,55 @@ async fn handle_messages<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
 /// Simple binary I/O test to check if the issue is with StdioAdapter
 async fn handle_simple_binary_io() -> Result<()> {
     debug!("REMOTE_SERVER_LOG: handle_simple_binary_io starting");
-    
+
     // Use tokio's async stdin/stdout directly
     let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
-    
+
     let mut buffer = [0u8; 1024];
-    
+
     for i in 0..10 {
         debug!("REMOTE_SERVER_LOG: Iteration {}, waiting for data...", i);
-        
-        match tokio::time::timeout(std::time::Duration::from_secs(5), stdin.read(&mut buffer)).await {
+
+        match tokio::time::timeout(std::time::Duration::from_secs(5), stdin.read(&mut buffer)).await
+        {
             Ok(Ok(n)) => {
                 debug!("REMOTE_SERVER_LOG: Read {} bytes from stdin", n);
-                debug!("REMOTE_SERVER_LOG: Raw bytes: {:?}", &buffer[..std::cmp::min(10, n)]);
-                
+                debug!(
+                    "REMOTE_SERVER_LOG: Raw bytes: {:?}",
+                    &buffer[..std::cmp::min(10, n)]
+                );
+
                 if n >= 2 {
                     let length = u16::from_be_bytes([buffer[0], buffer[1]]);
                     debug!("REMOTE_SERVER_LOG: Parsed length: {}", length);
-                    
+
                     if n >= 2 + length as usize {
                         let payload = &buffer[2..2 + length as usize];
                         let payload_str = String::from_utf8_lossy(payload);
                         debug!("REMOTE_SERVER_LOG: Payload: {:?}", payload_str);
-                        
+
                         // Send echo response
                         let response = format!("Echo: {}", payload_str);
                         let response_bytes = response.as_bytes();
                         let response_len = response_bytes.len() as u16;
-                        
-                        debug!("REMOTE_SERVER_LOG: Sending echo response, length: {}", response_len);
-                        
+
+                        debug!(
+                            "REMOTE_SERVER_LOG: Sending echo response, length: {}",
+                            response_len
+                        );
+
                         stdout.write_u16(response_len).await?;
                         stdout.write_all(response_bytes).await?;
                         stdout.flush().await?;
-                        
+
                         debug!("REMOTE_SERVER_LOG: Echo response sent");
                         break;
                     } else {
-                        warn!("REMOTE_SERVER_LOG: Incomplete message, expected {} more bytes", (2 + length as usize) - n);
+                        warn!(
+                            "REMOTE_SERVER_LOG: Incomplete message, expected {} more bytes",
+                            (2 + length as usize) - n
+                        );
                     }
                 } else {
                     warn!("REMOTE_SERVER_LOG: Not enough bytes for length header");
@@ -183,6 +212,6 @@ async fn handle_simple_binary_io() -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }

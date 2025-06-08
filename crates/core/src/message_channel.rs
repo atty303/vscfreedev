@@ -27,7 +27,6 @@ pub struct Message {
     pub payload: Bytes,
 }
 
-
 /// A bidirectional message channel for binary communication
 ///
 /// Wire format:
@@ -112,7 +111,6 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
             }
         }
     }
-
 }
 
 #[cfg(test)]

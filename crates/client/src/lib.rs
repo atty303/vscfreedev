@@ -1,15 +1,15 @@
 //! Client-side library for vscfreedev
 
 use anyhow::Result;
-use tracing::{debug, info, error};
-use russh::client::{Config, Handler, Handle, Session, connect, AuthResult};
 use russh::ChannelId;
+use russh::client::{AuthResult, Config, Handle, Handler, Session, connect};
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
+use tracing::{debug, error, info};
 use vscfreedev_core::message_channel::MessageChannel;
 
 /// Path to the remote binary built by build.rs
@@ -58,6 +58,7 @@ impl MyHandler {
 impl Handler for MyHandler {
     type Error = russh::Error;
 
+    #[allow(clippy::manual_async_fn)]
     fn check_server_key(
         &mut self,
         _server_public_key: &russh::keys::PublicKey,
@@ -65,6 +66,7 @@ impl Handler for MyHandler {
         async { Ok(true) }
     }
 
+    #[allow(clippy::manual_async_fn)]
     fn data(
         &mut self,
         _channel: ChannelId,
@@ -119,7 +121,10 @@ impl AsyncRead for SshChannelAdapter {
             let to_copy = std::cmp::min(buf.remaining(), self.read_buf.len());
             let data = self.read_buf.drain(..to_copy).collect::<Vec<u8>>();
             buf.put_slice(&data);
-            debug!("SshChannelAdapter::poll_read returned {} bytes from buffer", to_copy);
+            debug!(
+                "SshChannelAdapter::poll_read returned {} bytes from buffer",
+                to_copy
+            );
             return Poll::Ready(Ok(()));
         }
 
@@ -129,12 +134,12 @@ impl AsyncRead for SshChannelAdapter {
                 debug!("SshChannelAdapter::poll_read got {} bytes", data.len());
                 let to_copy = std::cmp::min(buf.remaining(), data.len());
                 buf.put_slice(&data[..to_copy]);
-                
+
                 // Store remainder in buffer if any
                 if to_copy < data.len() {
                     self.read_buf.extend_from_slice(&data[to_copy..]);
                 }
-                
+
                 debug!("SshChannelAdapter::poll_read returned {} bytes", to_copy);
                 Poll::Ready(Ok(()))
             }
@@ -153,22 +158,28 @@ impl AsyncWrite for SshChannelAdapter {
         cx: &mut TaskContext<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        debug!("SshChannelAdapter::poll_write called with {} bytes", buf.len());
-        
+        debug!(
+            "SshChannelAdapter::poll_write called with {} bytes",
+            buf.len()
+        );
+
         // Create future to send data
         let send_fut = self.handle.data(self.channel_id, buf.to_vec().into());
         tokio::pin!(send_fut);
 
         match send_fut.poll(cx) {
             Poll::Ready(Ok(_)) => {
-                debug!("SshChannelAdapter::poll_write sent {} bytes successfully", buf.len());
+                debug!(
+                    "SshChannelAdapter::poll_write sent {} bytes successfully",
+                    buf.len()
+                );
                 Poll::Ready(Ok(buf.len()))
             }
             Poll::Ready(Err(e)) => {
                 error!("SshChannelAdapter::poll_write error: {:?}", e);
                 Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
-                    format!("SSH data send failed: {:?}", e)
+                    format!("SSH data send failed: {:?}", e),
                 )))
             }
             Poll::Pending => Poll::Pending,
@@ -209,7 +220,9 @@ pub mod client {
             debug!("Authenticating with password");
             let auth_result = handle.authenticate_password(username, password).await?;
             if !matches!(auth_result, AuthResult::Success) {
-                return Err(ClientError::Connection("Password authentication failed".to_string()));
+                return Err(ClientError::Connection(
+                    "Password authentication failed".to_string(),
+                ));
             }
         } else if let Some(key_path) = key_path {
             debug!("Authenticating with key: {:?}", key_path);
@@ -219,12 +232,18 @@ pub mod client {
             let russh_key = russh::keys::PrivateKey::from_openssh(&key_str)
                 .map_err(|e| ClientError::Connection(format!("Failed to parse key: {}", e)))?;
             let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(russh_key), None);
-            let auth_result = handle.authenticate_publickey(username, key_with_hash).await?;
+            let auth_result = handle
+                .authenticate_publickey(username, key_with_hash)
+                .await?;
             if !matches!(auth_result, AuthResult::Success) {
-                return Err(ClientError::Connection("Key authentication failed".to_string()));
+                return Err(ClientError::Connection(
+                    "Key authentication failed".to_string(),
+                ));
             }
         } else {
-            return Err(ClientError::Connection("No authentication method provided".to_string()));
+            return Err(ClientError::Connection(
+                "No authentication method provided".to_string(),
+            ));
         }
 
         info!("Authentication successful");

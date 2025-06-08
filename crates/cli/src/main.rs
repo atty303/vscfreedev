@@ -2,7 +2,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use tracing::{info, debug};
+use tracing::{debug, info};
 use vscfreedev_client::client;
 
 #[derive(Parser)]

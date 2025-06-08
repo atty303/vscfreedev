@@ -83,14 +83,7 @@ impl RemoteContainer {
 
         // Create and start the container
         let run_status = Command::new("docker")
-            .args([
-                "run",
-                "-d",
-                "--name",
-                &container_name,
-                "-P",
-                &image_name,
-            ])
+            .args(["run", "-d", "--name", &container_name, "-P", &image_name])
             .status()
             .await
             .context("Failed to run Docker container")?;
@@ -108,10 +101,7 @@ impl RemoteContainer {
     /// Get the logs from the container
     pub async fn get_logs(&self) -> Result<String> {
         let output = Command::new("docker")
-            .args([
-                "logs",
-                &self.container_name,
-            ])
+            .args(["logs", &self.container_name])
             .output()
             .await
             .context("Failed to get container logs")?;
@@ -120,8 +110,7 @@ impl RemoteContainer {
             anyhow::bail!("Docker logs command failed");
         }
 
-        let logs = String::from_utf8(output.stdout)
-            .context("Failed to parse container logs")?;
+        let logs = String::from_utf8(output.stdout).context("Failed to parse container logs")?;
 
         Ok(logs)
     }
@@ -136,11 +125,7 @@ impl RemoteContainer {
     /// Get a mapped port for the container
     async fn get_mapped_port(&self, port_spec: &str) -> Result<u16> {
         let output = Command::new("docker")
-            .args([
-                "port",
-                &self.container_name,
-                port_spec,
-            ])
+            .args(["port", &self.container_name, port_spec])
             .output()
             .await
             .context("Failed to get container port")?;
@@ -149,8 +134,8 @@ impl RemoteContainer {
             anyhow::bail!("Docker port command failed");
         }
 
-        let port_mapping = String::from_utf8(output.stdout)
-            .context("Failed to parse port mapping")?;
+        let port_mapping =
+            String::from_utf8(output.stdout).context("Failed to parse port mapping")?;
 
         // Port mapping format is typically "0.0.0.0:49154"
         let port = port_mapping
