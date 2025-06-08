@@ -11,7 +11,7 @@ use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::time;
-use vscfreedev_core::message_channel::{ChannelHandle, MessageChannel, Multiplexer};
+use vscfreedev_core::message_channel::MessageChannel;
 
 /// Error types for the client
 #[derive(thiserror::Error, Debug)]
@@ -179,17 +179,13 @@ pub mod client {
 
 
     /// Connect to a remote host via SSH and establish a message channel
-    /// 
-    /// Returns a tuple containing:
-    /// - The channel handle for communication
-    /// - A boolean indicating whether the welcome message has already been received
     pub async fn connect_ssh(
         host: &str,
         port: u16,
         username: &str,
         password: Option<&str>,
         key_path: Option<&Path>,
-    ) -> Result<(ChannelHandle, bool)> {
+    ) -> Result<MessageChannel<SshChannelAdapter>> {
         // Build the remote executable with a timeout
         let remote_executable_path = time::timeout(
             Duration::from_secs(30),
@@ -381,65 +377,7 @@ pub mod client {
         // Create a message channel using text-safe mode for SSH
         let message_channel = MessageChannel::new_with_text_safe_mode(ssh_adapter);
 
-        // Create a multiplexer
-        let multiplexer = Multiplexer::new(message_channel);
-
-        // Create a channel for communication with a timeout
-        let mut channel = time::timeout(
-            Duration::from_secs(30),
-            async {
-                let mut lock = multiplexer.lock().await;
-                lock.create_channel().await
-            }
-        ).await.context("Timeout creating communication channel")??;
-
-        // Check if we already found a welcome message in the initial data
-        let mut welcome_found = false;
-        if !initial_data.is_empty() {
-            if let Ok(data_str) = std::str::from_utf8(&initial_data) {
-                if data_str.contains("Welcome") || data_str.contains("VSC:") {
-                    welcome_found = true;
-                    println!("Already found welcome message in initial data");
-                }
-            }
-        }
-
-        // If we haven't found a welcome message yet, try to receive it from the message channel
-        if !welcome_found {
-            println!("No welcome message found in initial data, trying to receive from message channel");
-
-            // Receive the welcome message from the remote server with a timeout
-            match time::timeout(
-                Duration::from_secs(10), // Shorter timeout since we've already waited
-                channel.receive()
-            ).await {
-                Ok(Ok(welcome)) => {
-                    // Check if the welcome message contains "Welcome"
-                    let welcome_str = String::from_utf8_lossy(&welcome);
-                    if !welcome_str.contains("Welcome") {
-                        println!("Received message doesn't contain 'Welcome': {}", welcome_str);
-                        return Err(anyhow::anyhow!("Unexpected welcome message: {}", welcome_str));
-                    }
-
-                    println!("Received welcome message from message channel: {}", welcome_str);
-                    welcome_found = true;
-                },
-                Ok(Err(e)) => {
-                    println!("Error receiving welcome message from message channel: {}", e);
-                    // If we couldn't receive a welcome message and didn't find one in initial data,
-                    // that's an error
-                    return Err(anyhow::anyhow!("Failed to receive welcome message: {}", e));
-                },
-                Err(e) => {
-                    println!("Timeout receiving welcome message from message channel: {}", e);
-                    // If we timed out and didn't find a welcome message in initial data,
-                    // that's an error
-                    return Err(anyhow::anyhow!("Timeout receiving welcome message: {}", e));
-                }
-            }
-        }
-
-        Ok((channel, welcome_found))
+        Ok(message_channel)
     }
 
     /// Build the remote executable

@@ -21,15 +21,9 @@ pub enum ChannelError {
 /// Result type for message channel operations
 pub type Result<T> = std::result::Result<T, ChannelError>;
 
-/// A channel ID used to multiplex different protocols
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ChannelId(pub u8);
-
-/// A message sent over the channel
+/// A simple message for direct client-remote communication
 #[derive(Debug, Clone)]
 pub struct Message {
-    /// The channel ID this message belongs to
-    pub channel_id: ChannelId,
     /// The message payload
     pub payload: Bytes,
 }
@@ -49,13 +43,11 @@ pub enum TransportMode {
 /// over a single connection with transport-appropriate encoding.
 ///
 /// Binary mode wire format:
-/// - 1 byte: channel ID
 /// - 2 bytes: payload length (big endian)
 /// - N bytes: payload
 ///
 /// Text-safe mode wire format:
 /// - "VSC:" prefix
-/// - 2 hex chars: channel ID
 /// - 4 hex chars: payload length
 /// - Base64 encoded payload
 /// - "\n" suffix
@@ -99,11 +91,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
         }
     }
     /// Send a message over the channel
-    pub async fn send(&mut self, message: Message) -> Result<()> {
-        let Message {
-            channel_id,
-            payload,
-        } = message;
+    pub async fn send(&mut self, payload: Bytes) -> Result<()> {
         let payload_len = payload.len();
 
         if payload_len > u16::MAX as usize {
@@ -115,9 +103,6 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
 
         match self.mode {
             TransportMode::Binary => {
-                // Write channel ID (1 byte)
-                self.inner.write_u8(channel_id.0).await?;
-
                 // Write payload length (2 bytes, big endian)
                 self.inner.write_u16(payload_len as u16).await?;
 
@@ -125,9 +110,9 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
                 self.inner.write_all(&payload).await?;
             }
             TransportMode::TextSafe => {
-                // Encode as text-safe format: VSC:CCLLLL<base64>\n
+                // Encode as text-safe format: VSC:LLLL<base64>\n
                 let encoded_payload = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &payload);
-                let frame = format!("VSC:{:02X}{:04X}{}\n", channel_id.0, payload_len, encoded_payload);
+                let frame = format!("VSC:{:04X}{}\n", payload_len, encoded_payload);
                 self.inner.write_all(frame.as_bytes()).await?;
             }
         }
@@ -139,34 +124,30 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
     }
 
     /// Receive a message from the channel
-    pub async fn receive(&mut self) -> Result<Message> {
+    pub async fn receive(&mut self) -> Result<Bytes> {
         match self.mode {
             TransportMode::Binary => self.receive_binary().await,
             TransportMode::TextSafe => self.receive_text_safe().await,
         }
     }
 
-    async fn receive_binary(&mut self) -> Result<Message> {
+    async fn receive_binary(&mut self) -> Result<Bytes> {
         loop {
             // Try to read a complete message from the buffer
-            if self.read_buffer.len() >= 3 {
-                // Read channel ID and payload length without advancing the cursor
-                let channel_id = self.read_buffer[0];
+            if self.read_buffer.len() >= 2 {
+                // Read payload length without advancing the cursor
                 let payload_len =
-                    u16::from_be_bytes([self.read_buffer[1], self.read_buffer[2]]) as usize;
+                    u16::from_be_bytes([self.read_buffer[0], self.read_buffer[1]]) as usize;
 
                 // Check if we have the complete message
-                if self.read_buffer.len() >= 3 + payload_len {
+                if self.read_buffer.len() >= 2 + payload_len {
                     // Advance the cursor past the header
-                    self.read_buffer.advance(3);
+                    self.read_buffer.advance(2);
 
                     // Extract the payload
                     let payload = self.read_buffer.split_to(payload_len).freeze();
 
-                    return Ok(Message {
-                        channel_id: ChannelId(channel_id),
-                        payload,
-                    });
+                    return Ok(payload);
                 }
             }
 
@@ -179,7 +160,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
         }
     }
 
-    async fn receive_text_safe(&mut self) -> Result<Message> {
+    async fn receive_text_safe(&mut self) -> Result<Bytes> {
         eprintln!("MSGCHAN: receive_text_safe starting");
         loop {
             // Read data into buffer and append to text line buffer
@@ -205,26 +186,19 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
                 let line = line.trim_end_matches('\n');
                 eprintln!("MSGCHAN: processing line: {:?}", line);
 
-                // Parse VSC:CCLLLL<base64> format
-                if line.starts_with("VSC:") && line.len() >= 10 {
-                    let channel_hex = &line[4..6];
-                    let length_hex = &line[6..10];
-                    let base64_data = &line[10..];
-                    eprintln!("MSGCHAN: parsing VSC message - channel:{}, length:{}, data:{}", channel_hex, length_hex, base64_data);
+                // Parse VSC:LLLL<base64> format
+                if line.starts_with("VSC:") && line.len() >= 8 {
+                    let length_hex = &line[4..8];
+                    let base64_data = &line[8..];
+                    eprintln!("MSGCHAN: parsing VSC message - length:{}, data:{}", length_hex, base64_data);
 
-                    if let (Ok(channel_id), Ok(expected_len)) = (
-                        u8::from_str_radix(channel_hex, 16),
-                        u16::from_str_radix(length_hex, 16),
-                    ) {
+                    if let Ok(expected_len) = u16::from_str_radix(length_hex, 16) {
                         match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, base64_data) {
                             Ok(payload_bytes) => {
                                 eprintln!("MSGCHAN: decoded {} bytes, expected {}", payload_bytes.len(), expected_len);
                                 if payload_bytes.len() == expected_len as usize {
                                     eprintln!("MSGCHAN: returning message successfully");
-                                    return Ok(Message {
-                                        channel_id: ChannelId(channel_id),
-                                        payload: Bytes::from(payload_bytes),
-                                    });
+                                    return Ok(Bytes::from(payload_bytes));
                                 } else {
                                     eprintln!("MSGCHAN: Length mismatch: expected {}, got {}", expected_len, payload_bytes.len());
                                 }
@@ -242,258 +216,26 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
     }
 }
 
-/// A handle to a specific channel within a message channel
-pub struct ChannelHandle {
-    channel_id: ChannelId,
-    sender: tokio::sync::mpsc::Sender<Message>,
-    receiver: tokio::sync::mpsc::Receiver<Message>,
-}
-
-impl ChannelHandle {
-    /// Send data on this channel
-    pub async fn send(&self, data: Bytes) -> Result<()> {
-        self.sender
-            .send(Message {
-                channel_id: self.channel_id,
-                payload: data,
-            })
-            .await
-            .map_err(|_| ChannelError::Closed)
-    }
-
-    /// Receive data from this channel
-    pub async fn receive(&mut self) -> Result<Bytes> {
-        self.receiver
-            .recv()
-            .await
-            .map(|msg| msg.payload)
-            .ok_or(ChannelError::Closed)
-    }
-}
-
-/// A multiplexer that manages multiple channels over a single message channel
-pub struct Multiplexer {
-    next_channel_id: u8,
-    channels: std::collections::HashMap<ChannelId, tokio::sync::mpsc::Sender<Message>>,
-    message_sender: tokio::sync::mpsc::Sender<Message>,
-}
-
-impl Multiplexer {
-    /// Create a new multiplexer with the given message channel
-    pub fn new<T: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
-        mut message_channel: MessageChannel<T>,
-    ) -> Arc<tokio::sync::Mutex<Self>> {
-        let (message_sender, mut message_receiver) = tokio::sync::mpsc::channel(100);
-
-        let multiplexer = Arc::new(tokio::sync::Mutex::new(Self {
-            next_channel_id: 1, // Start from 1, reserve 0 for control messages if needed
-            channels: std::collections::HashMap::new(),
-            message_sender,
-        }));
-
-        // Clone for the task
-        let multiplexer_clone = multiplexer.clone();
-
-        // Spawn a task to handle both sending and receiving messages
-        tokio::spawn(async move {
-            // Create a channel for outgoing messages to be processed
-            let (outgoing_tx, mut outgoing_rx) = tokio::sync::mpsc::channel::<Message>(100);
-
-            // Forward messages from the main channel to the outgoing channel
-            tokio::spawn(async move {
-                while let Some(message) = message_receiver.recv().await {
-                    if outgoing_tx.send(message).await.is_err() {
-                        break;
-                    }
-                }
-            });
-
-            // Process both incoming and outgoing messages
-            loop {
-                tokio::select! {
-                    // Process outgoing messages
-                    Some(message) = outgoing_rx.recv() => {
-                        // Add a timeout to the send operation
-                        match tokio::time::timeout(std::time::Duration::from_secs(30), message_channel.send(message)).await {
-                            Ok(result) => {
-                                if let Err(e) = result {
-                                    eprintln!("Error sending message: {}", e);
-                                    break;
-                                }
-                            },
-                            Err(_) => {
-                                eprintln!("Timeout sending message");
-                                break;
-                            }
-                        }
-                    }
-
-                    // Process incoming messages
-                    result = message_channel.receive() => {
-                        match result {
-                            Ok(message) => {
-                                // Store the channel_id before moving the message
-                                let channel_id = message.channel_id;
-
-                                // Add a timeout to the lock operation
-                                let multiplexer_lock_result = tokio::time::timeout(
-                                    std::time::Duration::from_secs(5), 
-                                    multiplexer_clone.lock()
-                                ).await;
-
-                                match multiplexer_lock_result {
-                                    Ok(mut multiplexer) => {
-                                        if let Some(sender) = multiplexer.channels.get(&channel_id) {
-                                            // Add a timeout to the send operation
-                                            match tokio::time::timeout(
-                                                std::time::Duration::from_secs(5),
-                                                sender.send(message)
-                                            ).await {
-                                                Ok(send_result) => {
-                                                    if send_result.is_err() {
-                                                        // Channel was closed, remove it
-                                                        multiplexer.channels.remove(&channel_id);
-                                                    }
-                                                },
-                                                Err(_) => {
-                                                    eprintln!("Timeout sending message to channel");
-                                                    multiplexer.channels.remove(&channel_id);
-                                                }
-                                            }
-                                        }
-                                    },
-                                    Err(_) => {
-                                        eprintln!("Timeout acquiring multiplexer lock");
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Error receiving message: {}", e);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-
-        multiplexer
-    }
-
-    /// Create a new channel
-    pub async fn create_channel(&mut self) -> Result<ChannelHandle> {
-        let channel_id = ChannelId(self.next_channel_id);
-        self.next_channel_id = self.next_channel_id.wrapping_add(1);
-
-        let (sender, receiver) = tokio::sync::mpsc::channel(100);
-        self.channels.insert(channel_id, sender.clone());
-
-        Ok(ChannelHandle {
-            channel_id,
-            sender: self.message_sender.clone(),
-            receiver,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use tokio::io::duplex;
 
     #[tokio::test]
-    async fn test_send_receive() {
+    async fn test_send_receive_binary() {
         let (client, server) = duplex(1024);
 
-        let mut client_channel = MessageChannel {
-            inner: client,
-            read_buffer: BytesMut::with_capacity(4096),
-        };
-        let mut server_channel = MessageChannel {
-            inner: server,
-            read_buffer: BytesMut::with_capacity(4096),
-        };
+        let mut client_channel = MessageChannel::new_with_stream(client);
+        let mut server_channel = MessageChannel::new_with_stream(server);
 
-        // Client sends a message
-        let client_message = Message {
-            channel_id: ChannelId(1),
-            payload: Bytes::from_static(b"Hello, server!"),
-        };
+        let test_data = Bytes::from_static(b"Hello, server!");
 
         tokio::spawn(async move {
-            client_channel.send(client_message).await.unwrap();
+            client_channel.send(test_data).await.unwrap();
         });
 
         // Server receives the message
         let received = server_channel.receive().await.unwrap();
-        assert_eq!(received.channel_id.0, 1);
-        assert_eq!(received.payload, Bytes::from_static(b"Hello, server!"));
-    }
-
-    #[tokio::test]
-    async fn test_multiplexer() {
-        let (client, server) = duplex(1024);
-
-        let client_channel = MessageChannel {
-            inner: client,
-            read_buffer: BytesMut::with_capacity(4096),
-        };
-        let server_channel = MessageChannel {
-            inner: server,
-            read_buffer: BytesMut::with_capacity(4096),
-        };
-
-        let client_multiplexer = Multiplexer::new(client_channel);
-        let server_multiplexer = Multiplexer::new(server_channel);
-
-        // Create channels
-        let client_http = client_multiplexer
-            .lock()
-            .await
-            .create_channel()
-            .await
-            .unwrap();
-        let client_ssh = client_multiplexer
-            .lock()
-            .await
-            .create_channel()
-            .await
-            .unwrap();
-
-        let mut server_channels = Vec::new();
-        for _ in 0..2 {
-            server_channels.push(
-                server_multiplexer
-                    .lock()
-                    .await
-                    .create_channel()
-                    .await
-                    .unwrap(),
-            );
-        }
-
-        // Client sends messages on different channels
-        client_http
-            .send(Bytes::from_static(b"HTTP request"))
-            .await
-            .unwrap();
-        client_ssh
-            .send(Bytes::from_static(b"SSH data"))
-            .await
-            .unwrap();
-
-        // Server receives messages
-        let mut received_messages = Vec::new();
-        for channel in &mut server_channels {
-            if let Ok(msg) =
-                tokio::time::timeout(std::time::Duration::from_millis(100), channel.receive()).await
-            {
-                received_messages.push(msg.unwrap());
-            }
-        }
-
-        assert_eq!(received_messages.len(), 2);
-        assert!(received_messages.contains(&Bytes::from_static(b"HTTP request")));
-        assert!(received_messages.contains(&Bytes::from_static(b"SSH data")));
+        assert_eq!(received, Bytes::from_static(b"Hello, server!"));
     }
 }

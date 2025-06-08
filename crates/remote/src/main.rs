@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use vscfreedev_core::message_channel::{MessageChannel, Multiplexer};
+use vscfreedev_core::message_channel::MessageChannel;
 
 /// An adapter that implements AsyncRead and AsyncWrite for standard input and output
 struct StdioAdapter {
@@ -411,78 +411,41 @@ async fn main() -> Result<()> {
         println!("Starting vscfreedev remote server using TCP on port {}", args.port);
     }
 
-    // Create a multiplexer based on the chosen transport
-    let multiplexer = if args.stdio {
+    if args.stdio {
         // Create a stdio adapter
         let stdio_adapter = StdioAdapter::new();
-        let message_channel = MessageChannel::new_with_text_safe_mode(stdio_adapter);
-        Multiplexer::new(message_channel)
+        let mut message_channel = MessageChannel::new_with_text_safe_mode(stdio_adapter);
+        handle_messages(&mut message_channel).await?;
     } else {
         // Create a TCP listener
         let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
         let (stream, _) = listener.accept().await?;
-        let message_channel = MessageChannel::new(stream);
-        Multiplexer::new(message_channel)
-    };
-
-    // Log message channel established
-    let channel_msg = "Message channel established";
-    println!("{}", channel_msg);
-
-    // Create a channel for communication
-    let mut multiplexer_lock = multiplexer.lock().await;
-
-    let mut channel = match multiplexer_lock.create_channel().await {
-        Ok(ch) => {
-            ch
-        },
-        Err(e) => {
-            eprintln!("REMOTE_SERVER_ERROR: Failed to create channel: {}", e);
-            return Err(anyhow::anyhow!("Failed to create channel: {}", e));
-        }
-    };
-
-    // Log channel created
-    let create_channel_msg = "Communication channel created";
-    println!("{}", create_channel_msg);
-
-    // Send a welcome message
-    let welcome_msg = "Welcome! Remote channel established";
-
-    match channel.send(bytes::Bytes::from(welcome_msg)).await {
-        Ok(_) => {
-            // Welcome message sent successfully
-        },
-        Err(e) => {
-            eprintln!("REMOTE_SERVER_ERROR: Failed to send welcome message: {}", e);
-            return Err(anyhow::anyhow!("Failed to send welcome message: {}", e));
-        }
+        let mut message_channel = MessageChannel::new(stream);
+        handle_messages(&mut message_channel).await?;
     }
 
-    // Log welcome message sent
-    let welcome_sent_msg = "Welcome message sent";
-    println!("{}", welcome_sent_msg);
+    Ok(())
+}
 
+async fn handle_messages<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    message_channel: &mut MessageChannel<T>
+) -> Result<()> {
     loop {
-        // Log waiting for message
-        let waiting_msg = "Waiting for message...";
-        println!("{}", waiting_msg);
-        eprintln!("REMOTE_SERVER_LOG: {}", waiting_msg);
+        println!("Waiting for message...");
+        eprintln!("REMOTE_SERVER_LOG: Waiting for message...");
 
-        eprintln!("REMOTE_SERVER_LOG: Calling channel.receive()");
-        match channel.receive().await {
+        eprintln!("REMOTE_SERVER_LOG: Calling message_channel.receive()");
+        match message_channel.receive().await {
             Ok(message) => {
                 eprintln!("REMOTE_SERVER_LOG: Message received successfully");
                 let message_str = String::from_utf8_lossy(&message);
-                let received_msg = format!("Received message: {}", message_str);
-                println!("{}", received_msg);
-                eprintln!("REMOTE_SERVER_LOG: {}", received_msg);
+                println!("Received message: {}", message_str);
 
                 // Echo the message back
                 let echo_msg = format!("Echo: {}", message_str);
                 eprintln!("REMOTE_SERVER_LOG: Preparing to send echo: {}", echo_msg);
 
-                match channel.send(bytes::Bytes::from(echo_msg)).await {
+                match message_channel.send(bytes::Bytes::from(echo_msg)).await {
                     Ok(_) => {
                         eprintln!("REMOTE_SERVER_LOG: Echo sent successfully");
                     },
@@ -493,9 +456,7 @@ async fn main() -> Result<()> {
                 }
             }
             Err(e) => {
-                let error_msg = format!("Error receiving message: {}", e);
-                println!("{}", error_msg);
-                eprintln!("REMOTE_SERVER_ERROR: {}", error_msg);
+                eprintln!("REMOTE_SERVER_ERROR: Error receiving message: {}", e);
                 break;
             }
         }
