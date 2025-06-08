@@ -38,11 +38,6 @@ pub struct SshChannelAdapter {
 impl SshChannelAdapter {
     /// Create a new SSH channel adapter
     pub fn new(channel: SshChannel) -> Self {
-        println!("Creating new SshChannelAdapter");
-
-        // Just log that we're creating a new adapter
-        println!("SSH channel adapter created");
-
         Self {
             channel: Arc::new(Mutex::new(channel)),
         }
@@ -55,8 +50,6 @@ impl AsyncRead for SshChannelAdapter {
         cx: &mut TaskContext<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        println!("SshChannelAdapter::poll_read called");
-
         let mut channel = match self.channel.lock() {
             Ok(channel) => channel,
             Err(e) => {
@@ -70,8 +63,14 @@ impl AsyncRead for SshChannelAdapter {
 
         let unfilled = buf.initialize_unfilled();
         match channel.read(unfilled) {
+            Ok(0) => {
+                // Reading 0 bytes typically indicates that the channel has been closed
+                // But instead of returning an error, we'll yield and try again later
+                // This prevents the channel from being closed prematurely
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
             Ok(n) => {
-                println!("SshChannelAdapter::poll_read read {} bytes", n);
                 buf.advance(n);
                 Poll::Ready(Ok(()))
             }
@@ -111,6 +110,13 @@ impl AsyncWrite for SshChannelAdapter {
         match channel.write(buf) {
             Ok(n) => {
                 println!("SshChannelAdapter::poll_write wrote {} bytes", n);
+
+                // Try to flush the channel after writing
+                if let Err(e) = channel.flush() {
+                    println!("ERROR: SshChannelAdapter::poll_write flush error: {:?}", e);
+                    return Poll::Ready(Err(e));
+                }
+
                 Poll::Ready(Ok(n))
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -142,27 +148,12 @@ impl AsyncWrite for SshChannelAdapter {
     ) -> Poll<std::io::Result<()>> {
         println!("SshChannelAdapter::poll_shutdown called");
 
-        let mut channel = match self.channel.lock() {
-            Ok(channel) => channel,
-            Err(e) => {
-                println!("ERROR: Failed to lock SSH channel for shutdown: {:?}", e);
-                return Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Failed to lock SSH channel",
-                )));
-            }
-        };
+        // Don't send EOF here as it can cause the channel to close prematurely
+        // before we've had a chance to receive the response.
+        // In SSH, sending EOF signals that no more data will be sent, which can
+        // cause the remote side to close the channel.
 
-        // Send EOF to indicate we're done writing
-        if let Err(e) = channel.send_eof() {
-            println!("ERROR: Failed to send EOF: {}", e);
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to send EOF: {}", e),
-            )));
-        }
-
-        println!("SshChannelAdapter::poll_shutdown sent EOF");
+        println!("SshChannelAdapter::poll_shutdown - not sending EOF to keep channel open");
         Poll::Ready(Ok(()))
     }
 }
@@ -178,13 +169,17 @@ pub mod client {
 
 
     /// Connect to a remote host via SSH and establish a message channel
+    /// 
+    /// Returns a tuple containing:
+    /// - The channel handle for communication
+    /// - A boolean indicating whether the welcome message has already been received
     pub async fn connect_ssh(
         host: &str,
         port: u16,
         username: &str,
         password: Option<&str>,
         key_path: Option<&Path>,
-    ) -> Result<ChannelHandle> {
+    ) -> Result<(ChannelHandle, bool)> {
         // Build the remote executable with a timeout
         let remote_executable_path = time::timeout(
             Duration::from_secs(30),
@@ -316,50 +311,100 @@ pub mod client {
         let mut channel = sess.channel_session().context("Failed to create SSH channel")?;
         println!("Starting remote executable: {}", remote_path);
 
-        // Set up the channel for bidirectional communication
-        channel.request_pty("xterm", None, None)?;
+        // Do NOT request a PTY for this channel, as we're going to be sending binary data
+        // and don't want terminal processing to interfere
 
-        // Run the remote executable with verbose output
-        // Note: We're not using --stdio flag because the remote server in the Docker container
-        // might be an older version that doesn't recognize this flag
+        // Run the remote executable with the stdio flag to use standard I/O
         channel.exec(&format!("{} -s 2>/tmp/remote_stderr.log", remote_path))
             .context("Failed to start remote executable")?;
         println!("Remote executable started");
 
-        // Check if the channel is still open by trying to read from it
-        let mut buf = [0u8; 1];
-        match channel.read(&mut buf) {
-            Ok(0) => {
-                println!("WARNING: SSH channel EOF after starting remote executable");
+        // Read any initial data from the channel
+        // The remote server might send some output before we establish the message channel
+        let mut initial_data = Vec::new();
+        let mut buf = [0u8; 1024];
 
-                // Try to get the stderr log
-                let mut stderr_check = sess.channel_session().context("Failed to create SSH channel for stderr check")?;
-                stderr_check.exec("cat /tmp/remote_stderr.log")?;
-                let mut stderr_output = String::new();
-                stderr_check.read_to_string(&mut stderr_output)?;
-                println!("Remote stderr log: {}", stderr_output);
+        // Try to read with a timeout
+        let read_result = time::timeout(
+            Duration::from_secs(5),
+            async {
+                loop {
+                    match channel.read(&mut buf) {
+                        Ok(0) => {
+                            println!("SSH channel EOF after starting remote executable");
 
-                return Err(anyhow::anyhow!("SSH channel EOF immediately after starting remote executable"));
-            },
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::WouldBlock {
-                    // This is expected for a non-blocking channel
-                    println!("SSH channel would block, which is expected");
-                } else {
-                    println!("WARNING: SSH channel error after starting remote executable: {}", e);
+                            // Try to get the stderr log
+                            let mut stderr_check = sess.channel_session().context("Failed to create SSH channel for stderr check")?;
+                            stderr_check.exec("cat /tmp/remote_stderr.log")?;
+                            let mut stderr_output = String::new();
+                            stderr_check.read_to_string(&mut stderr_output)?;
+                            println!("Remote stderr log: {}", stderr_output);
 
-                    // Try to get the stderr log
-                    let mut stderr_check = sess.channel_session().context("Failed to create SSH channel for stderr check")?;
-                    stderr_check.exec("cat /tmp/remote_stderr.log")?;
-                    let mut stderr_output = String::new();
-                    stderr_check.read_to_string(&mut stderr_output)?;
-                    println!("Remote stderr log: {}", stderr_output);
+                            return Err(anyhow::anyhow!("SSH channel EOF immediately after starting remote executable"));
+                        },
+                        Ok(n) => {
+                            println!("Read {} bytes from SSH channel after starting remote executable", n);
+                            initial_data.extend_from_slice(&buf[..n]);
 
-                    return Err(anyhow::anyhow!("SSH channel error immediately after starting remote executable: {}", e));
+                            // If we've read some data, try to see if it contains a welcome message
+                            if let Ok(data_str) = std::str::from_utf8(&initial_data) {
+                                println!("Initial data from SSH channel: {}", data_str);
+                                if data_str.contains("Welcome") {
+                                    println!("Found welcome message in initial data");
+                                    break;
+                                }
+                            }
+
+                            // Small delay to allow more data to arrive
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                        },
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            // This is expected for a non-blocking channel
+                            println!("SSH channel would block, which is expected");
+
+                            // If we've already read some data, we can proceed
+                            if !initial_data.is_empty() {
+                                break;
+                            }
+
+                            // Small delay to allow more data to arrive
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                        },
+                        Err(e) => {
+                            println!("WARNING: SSH channel error after starting remote executable: {}", e);
+
+                            // Try to get the stderr log
+                            let mut stderr_check = sess.channel_session().context("Failed to create SSH channel for stderr check")?;
+                            stderr_check.exec("cat /tmp/remote_stderr.log")?;
+                            let mut stderr_output = String::new();
+                            stderr_check.read_to_string(&mut stderr_output)?;
+                            println!("Remote stderr log: {}", stderr_output);
+
+                            return Err(anyhow::anyhow!("SSH channel error immediately after starting remote executable: {}", e));
+                        }
+                    }
                 }
-            },
-            Ok(_) => {
-                println!("WARNING: Unexpected data from SSH channel after starting remote executable");
+
+                Ok::<_, anyhow::Error>(())
+            }
+        ).await;
+
+        // If we timed out reading, but have some data, that's okay
+        if read_result.is_err() && !initial_data.is_empty() {
+            println!("Timed out reading from SSH channel, but we have {} bytes of initial data", initial_data.len());
+        } else if let Err(e) = read_result {
+            println!("Timed out reading from SSH channel with no data: {}", e);
+        } else if let Err(e) = read_result.unwrap() {
+            return Err(e);
+        }
+
+        // If we have initial data, check if it contains a welcome message
+        if !initial_data.is_empty() {
+            if let Ok(data_str) = std::str::from_utf8(&initial_data) {
+                println!("Initial data from SSH channel: {}", data_str);
+                if data_str.contains("Welcome") {
+                    println!("Found welcome message in initial data");
+                }
             }
         }
 
@@ -373,7 +418,7 @@ pub mod client {
         let multiplexer = Multiplexer::new(message_channel);
 
         // Create a channel for communication with a timeout
-        let channel = time::timeout(
+        let mut channel = time::timeout(
             Duration::from_secs(30),
             async {
                 let mut lock = multiplexer.lock().await;
@@ -381,7 +426,53 @@ pub mod client {
             }
         ).await.context("Timeout creating communication channel")??;
 
-        Ok(channel)
+        // Check if we already found a welcome message in the initial data
+        let mut welcome_found = false;
+        if !initial_data.is_empty() {
+            if let Ok(data_str) = std::str::from_utf8(&initial_data) {
+                if data_str.contains("Welcome") {
+                    welcome_found = true;
+                    println!("Already found welcome message in initial data: {}", data_str);
+                }
+            }
+        }
+
+        // If we haven't found a welcome message yet, try to receive it from the message channel
+        if !welcome_found {
+            println!("No welcome message found in initial data, trying to receive from message channel");
+
+            // Receive the welcome message from the remote server with a timeout
+            match time::timeout(
+                Duration::from_secs(10), // Shorter timeout since we've already waited
+                channel.receive()
+            ).await {
+                Ok(Ok(welcome)) => {
+                    // Check if the welcome message contains "Welcome"
+                    let welcome_str = String::from_utf8_lossy(&welcome);
+                    if !welcome_str.contains("Welcome") {
+                        println!("Received message doesn't contain 'Welcome': {}", welcome_str);
+                        return Err(anyhow::anyhow!("Unexpected welcome message: {}", welcome_str));
+                    }
+
+                    println!("Received welcome message from message channel: {}", welcome_str);
+                    welcome_found = true;
+                },
+                Ok(Err(e)) => {
+                    println!("Error receiving welcome message from message channel: {}", e);
+                    // If we couldn't receive a welcome message and didn't find one in initial data,
+                    // that's an error
+                    return Err(anyhow::anyhow!("Failed to receive welcome message: {}", e));
+                },
+                Err(e) => {
+                    println!("Timeout receiving welcome message from message channel: {}", e);
+                    // If we timed out and didn't find a welcome message in initial data,
+                    // that's an error
+                    return Err(anyhow::anyhow!("Timeout receiving welcome message: {}", e));
+                }
+            }
+        }
+
+        Ok((channel, welcome_found))
     }
 
     /// Build the remote executable

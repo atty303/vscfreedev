@@ -3,65 +3,157 @@ use clap::Parser;
 use std::io::{self, Read, Write};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, Waker};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use vscfreedev_core::message_channel::{MessageChannel, Multiplexer};
 
 /// An adapter that implements AsyncRead and AsyncWrite for standard input and output
 struct StdioAdapter {
-    stdin: Arc<Mutex<io::Stdin>>,
-    stdout: Arc<Mutex<io::Stdout>>,
+    // Channel for reading from stdin
+    read_rx: Receiver<io::Result<Vec<u8>>>,
+    // Channel for writing to stdout
+    write_tx: Sender<(Vec<u8>, Sender<io::Result<usize>>)>,
+    // Buffer for data read from stdin
+    read_buffer: Vec<u8>,
+    // Waker for the task waiting for data
+    waker: Option<Waker>,
+    // Channel for receiving the result of a write operation
+    write_result_rx: Option<Receiver<io::Result<usize>>>,
+    // Data that was sent to the write thread
+    write_data: Option<Vec<u8>>,
 }
 
 impl StdioAdapter {
     /// Create a new stdio adapter
     pub fn new() -> Self {
-        // Log that we're creating a new stdio adapter
-        eprintln!("REMOTE_SERVER_LOG: Creating new StdioAdapter");
+        // Create channels for reading from stdin and writing to stdout
+        let (read_tx, read_rx) = channel::<io::Result<Vec<u8>>>(100);
+        let (write_tx, mut write_rx) = channel::<(Vec<u8>, Sender<io::Result<usize>>)>(100);
+
+        // Spawn a thread to read from stdin
+        std::thread::spawn(move || {
+            let mut stdin = io::stdin();
+            let mut buffer = [0u8; 1024];
+
+            loop {
+                // Read from stdin
+                match stdin.read(&mut buffer) {
+                    Ok(0) => {
+                        // EOF
+                        if read_tx.blocking_send(Err(io::Error::new(io::ErrorKind::UnexpectedEof, "EOF from stdin"))).is_err() {
+                            // Channel closed, exit thread
+                            break;
+                        }
+                    }
+                    Ok(n) => {
+                        // Data read
+                        if read_tx.blocking_send(Ok(buffer[..n].to_vec())).is_err() {
+                            // Channel closed, exit thread
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        // Error
+                        eprintln!("REMOTE_SERVER_ERROR: StdioAdapter read thread: Error reading from stdin: {:?}", e);
+                        if read_tx.blocking_send(Err(e)).is_err() {
+                            // Channel closed, exit thread
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        // Spawn a thread to write to stdout
+        std::thread::spawn(move || {
+            let mut stdout = io::stdout();
+
+            while let Some((data, result_tx)) = write_rx.blocking_recv() {
+                // Write to stdout
+                let result = stdout.write(&data).and_then(|n| {
+                    // Flush stdout after writing
+                    stdout.flush()?;
+                    Ok(n)
+                });
+
+                // Send the result back
+                if result_tx.blocking_send(result).is_err() {
+                    // Channel closed, but continue processing other writes
+                    eprintln!("REMOTE_SERVER_ERROR: StdioAdapter write thread: Failed to send write result");
+                }
+            }
+        });
 
         Self {
-            stdin: Arc::new(Mutex::new(io::stdin())),
-            stdout: Arc::new(Mutex::new(io::stdout())),
+            read_rx,
+            write_tx,
+            read_buffer: Vec::new(),
+            waker: None,
+            write_result_rx: None,
+            write_data: None,
         }
     }
 }
 
 impl AsyncRead for StdioAdapter {
     fn poll_read(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        // Log that we're trying to read from stdin
-        eprintln!("REMOTE_SERVER_LOG: StdioAdapter::poll_read called");
+        // Get a mutable reference to self
+        let this = self.get_mut();
 
-        let mut stdin = match self.stdin.lock() {
-            Ok(stdin) => stdin,
-            Err(e) => {
-                eprintln!("REMOTE_SERVER_ERROR: Failed to lock stdin: {:?}", e);
-                return Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Failed to lock stdin",
-                )));
-            }
-        };
+        // Store the waker for later use
+        this.waker = Some(cx.waker().clone());
 
-        let unfilled = buf.initialize_unfilled();
-        match stdin.read(unfilled) {
-            Ok(n) => {
-                eprintln!("REMOTE_SERVER_LOG: StdioAdapter::poll_read read {} bytes", n);
+        // If we have data in the buffer, use it
+        if !this.read_buffer.is_empty() {
+            let unfilled = buf.initialize_unfilled();
+            let n = std::cmp::min(unfilled.len(), this.read_buffer.len());
+            unfilled[..n].copy_from_slice(&this.read_buffer[..n]);
+            buf.advance(n);
+
+            // Remove the used data from the buffer
+            this.read_buffer = this.read_buffer.split_off(n);
+
+            return Poll::Ready(Ok(()));
+        }
+
+        // Try to receive data from the channel
+        match this.read_rx.try_recv() {
+            Ok(Ok(data)) => {
+                // Copy data to the buffer
+                let unfilled = buf.initialize_unfilled();
+                let n = std::cmp::min(unfilled.len(), data.len());
+                unfilled[..n].copy_from_slice(&data[..n]);
                 buf.advance(n);
+
+                // Store any remaining data in the buffer
+                if n < data.len() {
+                    this.read_buffer = data[n..].to_vec();
+                }
+
                 Poll::Ready(Ok(()))
             }
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                eprintln!("REMOTE_SERVER_LOG: StdioAdapter::poll_read would block, yielding");
-                // Standard I/O doesn't support async I/O, so we need to yield and try again later
+            Ok(Err(e)) => {
+                // Error received
+                eprintln!("REMOTE_SERVER_ERROR: StdioAdapter::poll_read error from channel: {:?}", e);
+                Poll::Ready(Err(e))
+            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                // No data available, yield and try again later
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            Err(e) => {
-                eprintln!("REMOTE_SERVER_ERROR: StdioAdapter::poll_read error: {:?}", e);
-                Poll::Ready(Err(e))
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                // Channel closed
+                eprintln!("REMOTE_SERVER_ERROR: StdioAdapter::poll_read channel closed");
+                Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "Read channel closed",
+                )))
             }
         }
     }
@@ -69,74 +161,177 @@ impl AsyncRead for StdioAdapter {
 
 impl AsyncWrite for StdioAdapter {
     fn poll_write(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        // Log that we're trying to write to stdout
-        eprintln!("REMOTE_SERVER_LOG: StdioAdapter::poll_write called with {} bytes", buf.len());
+        // Get a mutable reference to self
+        let this = self.get_mut();
 
-        let mut stdout = match self.stdout.lock() {
-            Ok(stdout) => stdout,
-            Err(e) => {
-                eprintln!("REMOTE_SERVER_ERROR: Failed to lock stdout: {:?}", e);
-                return Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Failed to lock stdout",
-                )));
-            }
-        };
+        // Store the waker for later use
+        this.waker = Some(cx.waker().clone());
 
-        match stdout.write(buf) {
-            Ok(n) => {
-                eprintln!("REMOTE_SERVER_LOG: StdioAdapter::poll_write wrote {} bytes", n);
-                Poll::Ready(Ok(n))
+        // Check if we already have a result channel
+        if let Some(result_rx) = &mut this.write_result_rx {
+            // We already sent the data, now check if we have a result
+            match result_rx.try_recv() {
+                Ok(result) => {
+                    // Result received, clear the result channel and data
+                    this.write_result_rx = None;
+                    this.write_data = None;
+
+                    match result {
+                        Ok(n) => {
+                            Poll::Ready(Ok(n))
+                        }
+                        Err(e) => {
+                            eprintln!("REMOTE_SERVER_ERROR: StdioAdapter::poll_write error: {:?}", e);
+                            Poll::Ready(Err(e))
+                        }
+                    }
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                    // No result yet, yield and try again later
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    // Channel closed, clear the result channel and data
+                    this.write_result_rx = None;
+                    this.write_data = None;
+
+                    eprintln!("REMOTE_SERVER_ERROR: StdioAdapter::poll_write result channel closed");
+                    Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "Write result channel closed",
+                    )))
+                }
             }
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                eprintln!("REMOTE_SERVER_LOG: StdioAdapter::poll_write would block, yielding");
-                // Standard I/O doesn't support async I/O, so we need to yield and try again later
+        } else {
+            // We need to send the data
+            // Check if the data has changed
+            if this.write_data.as_ref().map_or(true, |data| data != buf) {
+                // Data has changed, create a new channel and send the data
+                let (result_tx, result_rx) = channel::<io::Result<usize>>(1);
+                this.write_result_rx = Some(result_rx);
+                this.write_data = Some(buf.to_vec());
+
+                // Send the data to the write thread
+                match this.write_tx.try_send((buf.to_vec(), result_tx)) {
+                    Ok(()) => {
+                        // Data sent, yield and try again later to check for the result
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                        // Channel full, clear the result channel and data
+                        this.write_result_rx = None;
+                        this.write_data = None;
+
+                        // Yield and try again later
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                        // Channel closed, clear the result channel and data
+                        this.write_result_rx = None;
+                        this.write_data = None;
+
+                        eprintln!("REMOTE_SERVER_ERROR: StdioAdapter::poll_write channel closed");
+                        Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "Write channel closed",
+                        )))
+                    }
+                }
+            } else {
+                // Data hasn't changed, this is a duplicate call
                 cx.waker().wake_by_ref();
                 Poll::Pending
-            }
-            Err(e) => {
-                eprintln!("REMOTE_SERVER_ERROR: StdioAdapter::poll_write error: {:?}", e);
-                Poll::Ready(Err(e))
             }
         }
     }
 
     fn poll_flush(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
-        // Log that we're trying to flush stdout
-        eprintln!("REMOTE_SERVER_LOG: StdioAdapter::poll_flush called");
+        // Get a mutable reference to self
+        let this = self.get_mut();
 
-        let mut stdout = match self.stdout.lock() {
-            Ok(stdout) => stdout,
-            Err(e) => {
-                eprintln!("REMOTE_SERVER_ERROR: Failed to lock stdout for flush: {:?}", e);
-                return Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Failed to lock stdout",
-                )));
-            }
-        };
+        // Store the waker for later use
+        this.waker = Some(cx.waker().clone());
 
-        match stdout.flush() {
-            Ok(()) => {
-                eprintln!("REMOTE_SERVER_LOG: StdioAdapter::poll_flush succeeded");
-                Poll::Ready(Ok(()))
+        // Check if we already have a result channel
+        if let Some(result_rx) = &mut this.write_result_rx {
+            // We already sent the data, now check if we have a result
+            match result_rx.try_recv() {
+                Ok(result) => {
+                    // Result received, clear the result channel and data
+                    this.write_result_rx = None;
+                    this.write_data = None;
+
+                    match result {
+                        Ok(_) => {
+                            Poll::Ready(Ok(()))
+                        }
+                        Err(e) => {
+                            eprintln!("REMOTE_SERVER_ERROR: StdioAdapter::poll_flush error: {:?}", e);
+                            Poll::Ready(Err(e))
+                        }
+                    }
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                    // No result yet, yield and try again later
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    // Channel closed, clear the result channel and data
+                    this.write_result_rx = None;
+                    this.write_data = None;
+
+                    eprintln!("REMOTE_SERVER_ERROR: StdioAdapter::poll_flush result channel closed");
+                    Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "Flush result channel closed",
+                    )))
+                }
             }
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                eprintln!("REMOTE_SERVER_LOG: StdioAdapter::poll_flush would block, yielding");
-                // Standard I/O doesn't support async I/O, so we need to yield and try again later
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            }
-            Err(e) => {
-                eprintln!("REMOTE_SERVER_ERROR: StdioAdapter::poll_flush error: {:?}", e);
-                Poll::Ready(Err(e))
+        } else {
+            // We need to send an empty buffer to flush stdout
+            // Create a new channel and send the data
+            let (result_tx, result_rx) = channel::<io::Result<usize>>(1);
+            this.write_result_rx = Some(result_rx);
+            this.write_data = Some(Vec::new()); // Empty buffer for flush
+
+            // Send an empty buffer to the write thread, which will flush stdout after writing
+            match this.write_tx.try_send((Vec::new(), result_tx)) {
+                Ok(()) => {
+                    // Data sent, yield and try again later to check for the result
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    // Channel full, clear the result channel and data
+                    this.write_result_rx = None;
+                    this.write_data = None;
+
+                    // Yield and try again later
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    // Channel closed, clear the result channel and data
+                    this.write_result_rx = None;
+                    this.write_data = None;
+
+                    eprintln!("REMOTE_SERVER_ERROR: StdioAdapter::poll_flush channel closed");
+                    Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "Flush channel closed",
+                    )))
+                }
             }
         }
     }
@@ -145,9 +340,6 @@ impl AsyncWrite for StdioAdapter {
         self: Pin<&mut Self>,
         _cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
-        // Log that we're shutting down
-        eprintln!("REMOTE_SERVER_LOG: StdioAdapter::poll_shutdown called");
-
         // No need to do anything special for shutdown
         Poll::Ready(Ok(()))
     }
@@ -168,9 +360,6 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Log to stderr immediately to see if the process is starting
-    eprintln!("REMOTE_SERVER_STARTUP: Remote server process starting");
-
     // Write a simple message to a file as soon as the server starts
     // This will help us determine if the server is being executed correctly
     let startup_file = std::fs::OpenOptions::new()
@@ -181,7 +370,6 @@ async fn main() -> Result<()> {
 
     if let Ok(mut file) = startup_file {
         let _ = writeln!(file, "Remote server started at {}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
-        eprintln!("REMOTE_SERVER_STARTUP: Wrote to startup file");
     } else {
         // If we can't write to the file, try to write to stderr
         eprintln!("REMOTE_SERVER_ERROR: Failed to write to startup file");
@@ -214,52 +402,34 @@ async fn main() -> Result<()> {
 
     // Log startup to stderr for better visibility in SSH logs
     if args.stdio {
-        eprintln!("REMOTE_SERVER_LOG: Starting vscfreedev remote server using standard I/O");
         println!("Starting vscfreedev remote server using standard I/O");
     } else {
-        eprintln!("REMOTE_SERVER_LOG: Starting vscfreedev remote server using TCP on port {}", args.port);
         println!("Starting vscfreedev remote server using TCP on port {}", args.port);
     }
 
     // Create a multiplexer based on the chosen transport
-    eprintln!("REMOTE_SERVER_LOG: Creating message channel with transport: {}", if args.stdio { "stdio" } else { "tcp" });
-
     let multiplexer = if args.stdio {
         // Create a stdio adapter
-        eprintln!("REMOTE_SERVER_LOG: Creating stdio adapter");
         let stdio_adapter = StdioAdapter::new();
-        eprintln!("REMOTE_SERVER_LOG: Creating message channel with stdio adapter");
         let message_channel = MessageChannel::new_with_stream(stdio_adapter);
-        eprintln!("REMOTE_SERVER_LOG: Creating multiplexer");
         Multiplexer::new(message_channel)
     } else {
         // Create a TCP listener
-        eprintln!("REMOTE_SERVER_LOG: Creating TCP listener on port {}", args.port);
         let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
-        eprintln!("REMOTE_SERVER_LOG: Waiting for connection on port {}", args.port);
         let (stream, _) = listener.accept().await?;
-        eprintln!("REMOTE_SERVER_LOG: Connection accepted from {}", stream.peer_addr()?);
-        eprintln!("REMOTE_SERVER_LOG: Creating message channel with TCP stream");
         let message_channel = MessageChannel::new(stream);
-        eprintln!("REMOTE_SERVER_LOG: Creating multiplexer");
         Multiplexer::new(message_channel)
     };
-
-    eprintln!("REMOTE_SERVER_LOG: Multiplexer created");
 
     // Log message channel established
     let channel_msg = "Message channel established";
     println!("{}", channel_msg);
-    eprintln!("REMOTE_SERVER_LOG: {}", channel_msg);
 
     // Create a channel for communication
-    eprintln!("REMOTE_SERVER_LOG: Acquiring multiplexer lock");
     let mut multiplexer_lock = multiplexer.lock().await;
-    eprintln!("REMOTE_SERVER_LOG: Multiplexer lock acquired, creating channel");
 
     let mut channel = match multiplexer_lock.create_channel().await {
         Ok(ch) => {
-            eprintln!("REMOTE_SERVER_LOG: Channel created successfully");
             ch
         },
         Err(e) => {
@@ -271,15 +441,13 @@ async fn main() -> Result<()> {
     // Log channel created
     let create_channel_msg = "Communication channel created";
     println!("{}", create_channel_msg);
-    eprintln!("REMOTE_SERVER_LOG: {}", create_channel_msg);
 
     // Send a welcome message
     let welcome_msg = "Welcome! Remote channel established";
-    eprintln!("REMOTE_SERVER_LOG: Preparing to send welcome message: {}", welcome_msg);
 
     match channel.send(bytes::Bytes::from(welcome_msg)).await {
         Ok(_) => {
-            eprintln!("REMOTE_SERVER_LOG: Welcome message sent successfully");
+            // Welcome message sent successfully
         },
         Err(e) => {
             eprintln!("REMOTE_SERVER_ERROR: Failed to send welcome message: {}", e);
@@ -290,10 +458,6 @@ async fn main() -> Result<()> {
     // Log welcome message sent
     let welcome_sent_msg = "Welcome message sent";
     println!("{}", welcome_sent_msg);
-    eprintln!("REMOTE_SERVER_LOG: {}", welcome_sent_msg);
-
-    // Keep the connection alive and handle messages
-    eprintln!("REMOTE_SERVER_LOG: Entering message handling loop");
 
     loop {
         // Log waiting for message
@@ -332,8 +496,6 @@ async fn main() -> Result<()> {
             }
         }
     }
-
-    eprintln!("REMOTE_SERVER_LOG: Exiting message handling loop");
 
     Ok(())
 }

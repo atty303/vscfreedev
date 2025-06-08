@@ -90,6 +90,9 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
         // Write payload
         self.inner.write_all(&payload).await?;
 
+        // Explicitly flush the stream to ensure data is sent
+        self.inner.flush().await?;
+
         Ok(())
     }
 
