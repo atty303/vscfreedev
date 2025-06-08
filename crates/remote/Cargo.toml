@@ -13,3 +13,5 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-uti
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 bytes = "1"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

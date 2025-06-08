@@ -2,6 +2,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use tracing::{info, debug};
 use vscfreedev_client::client;
 
 #[derive(Parser)]
@@ -43,6 +44,8 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
+
     let cli = Cli::parse();
 
     match &cli.command {
@@ -54,7 +57,7 @@ async fn main() -> Result<()> {
             key_path,
             message,
         } => {
-            println!("Connecting to {}:{} as {}", host, port, username);
+            info!("Connecting to {}:{} as {}", host, port, username);
 
             // Connect to the remote host via SSH
             let mut channel = client::connect_ssh(
@@ -66,17 +69,17 @@ async fn main() -> Result<()> {
             )
             .await?;
 
-            println!("Connected to remote host");
+            info!("Connected to remote host");
 
             // Send a message
-            println!("Sending message: {}", message);
+            debug!("Sending message: {}", message);
             channel.send(Bytes::from(message.clone())).await?;
 
             // Receive the response
             let response = channel.receive().await?;
-            println!("Received: {}", String::from_utf8_lossy(&response));
+            info!("Received: {}", String::from_utf8_lossy(&response));
 
-            println!("SSH connection test completed successfully");
+            info!("SSH connection test completed successfully");
         }
     }
 

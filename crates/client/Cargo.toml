@@ -12,6 +12,7 @@ russh = "0.45"
 russh-keys = "0.45"
 async-trait = "0.1"
 futures = "0.3"
+tracing = { workspace = true }
 
 [build-dependencies]
 

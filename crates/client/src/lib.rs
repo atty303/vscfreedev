@@ -1,6 +1,7 @@
 //! Client-side library for vscfreedev
 
 use anyhow::Result;
+use tracing::{debug, warn, info, error};
 use russh::client::{Config, Handler, Handle, Session, connect};
 use russh::ChannelId;
 use russh_keys::key::PublicKey;
@@ -71,11 +72,11 @@ impl Handler for MyHandler {
         data: &[u8],
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
-        eprintln!("RusshHandler: Received {} bytes", data.len());
+        debug!("RusshHandler: Received {} bytes", data.len());
         let data_tx_guard = self.data_tx.lock().await;
         if let Some(ref tx) = *data_tx_guard {
             if let Err(e) = tx.send(data.to_vec()) {
-                eprintln!("RusshHandler: Failed to send data: {}", e);
+                error!("RusshHandler: Failed to send data: {}", e);
             }
         }
         Ok(())
@@ -118,7 +119,7 @@ impl AsyncRead for SshChannelAdapter {
                 let to_copy = std::cmp::min(buf.remaining(), buffer_guard.len());
                 let data = buffer_guard.drain(..to_copy).collect::<Vec<u8>>();
                 buf.put_slice(&data);
-                eprintln!("SshChannelAdapter::poll_read returned {} bytes from buffer", to_copy);
+                debug!("SshChannelAdapter::poll_read returned {} bytes from buffer", to_copy);
                 return Poll::Ready(Ok(()));
             }
         }
@@ -127,7 +128,7 @@ impl AsyncRead for SshChannelAdapter {
         if let Ok(mut rx_guard) = self.read_rx.try_lock() {
             match rx_guard.try_recv() {
                 Ok(data) => {
-                    eprintln!("SshChannelAdapter::poll_read got {} bytes", data.len());
+                    debug!("SshChannelAdapter::poll_read got {} bytes", data.len());
                     let to_copy = std::cmp::min(buf.remaining(), data.len());
                     buf.put_slice(&data[..to_copy]);
                     
@@ -138,14 +139,14 @@ impl AsyncRead for SshChannelAdapter {
                         }
                     }
                     
-                    eprintln!("SshChannelAdapter::poll_read returned {} bytes", to_copy);
+                    debug!("SshChannelAdapter::poll_read returned {} bytes", to_copy);
                     return Poll::Ready(Ok(()));
                 }
                 Err(mpsc::error::TryRecvError::Empty) => {
                     return Poll::Pending;
                 }
                 Err(mpsc::error::TryRecvError::Disconnected) => {
-                    eprintln!("SshChannelAdapter::poll_read channel disconnected");
+                    warn!("SshChannelAdapter::poll_read channel disconnected");
                     return Poll::Ready(Ok(()));
                 }
             }
@@ -161,8 +162,8 @@ impl AsyncWrite for SshChannelAdapter {
         cx: &mut TaskContext<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        eprintln!("SshChannelAdapter::poll_write called with {} bytes", buf.len());
-        eprintln!("SshChannelAdapter::poll_write data: {}", String::from_utf8_lossy(buf));
+        debug!("SshChannelAdapter::poll_write called with {} bytes", buf.len());
+        debug!("SshChannelAdapter::poll_write data: {}", String::from_utf8_lossy(buf));
         
         let handle = self.handle.clone();
         let channel_id = self.channel_id;
@@ -183,11 +184,11 @@ impl AsyncWrite for SshChannelAdapter {
 
         match send_fut.poll(&mut context) {
             Poll::Ready(Ok(_)) => {
-                eprintln!("SshChannelAdapter::poll_write sent {} bytes successfully", buf.len());
+                debug!("SshChannelAdapter::poll_write sent {} bytes successfully", buf.len());
                 Poll::Ready(Ok(buf.len()))
             }
             Poll::Ready(Err(e)) => {
-                eprintln!("SshChannelAdapter::poll_write error: {}", e);
+                error!("SshChannelAdapter::poll_write error: {}", e);
                 Poll::Ready(Err(e))
             }
             Poll::Pending => {
@@ -198,12 +199,12 @@ impl AsyncWrite for SshChannelAdapter {
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
-        eprintln!("SshChannelAdapter::poll_flush called");
+        debug!("SshChannelAdapter::poll_flush called");
         Poll::Ready(Ok(()))
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
-        eprintln!("SshChannelAdapter::poll_shutdown called");
+        debug!("SshChannelAdapter::poll_shutdown called");
         Poll::Ready(Ok(()))
     }
 }
@@ -220,7 +221,7 @@ pub mod client {
         password: Option<&str>,
         key_path: Option<&Path>,
     ) -> Result<MessageChannel<SshChannelAdapter>, ClientError> {
-        eprintln!("Connecting to {}:{} as {}", host, port, username);
+        info!("Connecting to {}:{} as {}", host, port, username);
 
         let config = Arc::new(Config::default());
         let (handler, data_rx) = MyHandler::new();
@@ -230,13 +231,13 @@ pub mod client {
 
         // Authenticate
         if let Some(password) = password {
-            eprintln!("Authenticating with password");
+            debug!("Authenticating with password");
             let auth_result = handle.authenticate_password(username, password).await?;
             if !auth_result {
                 return Err(ClientError::Connection("Password authentication failed".to_string()));
             }
         } else if let Some(key_path) = key_path {
-            eprintln!("Authenticating with key: {:?}", key_path);
+            debug!("Authenticating with key: {:?}", key_path);
             let key_str = std::fs::read_to_string(key_path)?;
             let key = russh_keys::decode_secret_key(&key_str, None)?;
             let auth_result = handle.authenticate_publickey(username, Arc::new(key)).await?;
@@ -247,21 +248,21 @@ pub mod client {
             return Err(ClientError::Connection("No authentication method provided".to_string()));
         }
 
-        eprintln!("Authentication successful");
+        info!("Authentication successful");
 
         // Create a channel
         let mut channel = handle.channel_open_session().await?;
         let channel_id = channel.id();
-        eprintln!("Created SSH channel: {:?}", channel_id);
+        debug!("Created SSH channel: {:?}", channel_id);
 
         // Execute the remote command
         let remote_path = "/usr/local/bin/vscfreedev_remote";
         let command = format!("{} -s 2>/tmp/remote_stderr.log", remote_path);
-        eprintln!("Executing command: {}", command);
+        debug!("Executing command: {}", command);
 
         // Execute the command using channel exec
         channel.exec(false, command.as_bytes()).await?;
-        eprintln!("Command executed successfully");
+        debug!("Command executed successfully");
 
         // Create the adapter
         let ssh_adapter = SshChannelAdapter::new(handle, channel_id, data_rx);

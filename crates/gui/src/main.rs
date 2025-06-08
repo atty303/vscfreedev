@@ -1,3 +1,6 @@
+use tracing::info;
+
 fn main() {
-    println!("gui");
+    tracing_subscriber::fmt::init();
+    info!("gui");
 }

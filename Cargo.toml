@@ -11,3 +11,5 @@ license = "MIT OR Apache-2.0"
 vscfreedev-core = { path = "crates/core" }
 vscfreedev-remote = { path = "crates/remote" }
 vscfreedev-client = { path = "crates/client" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -10,3 +10,5 @@ vscfreedev-core = { workspace = true }
 vscfreedev-client = { workspace = true }
 anyhow = "1"
 bytes = "1"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
