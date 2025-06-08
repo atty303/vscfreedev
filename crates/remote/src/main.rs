@@ -4,7 +4,7 @@ use clap::Parser;
 use std::io::{self, Read, Write};
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use vscfreedev_core::message_channel::MessageChannel;
 
@@ -481,8 +481,9 @@ async fn main() -> Result<()> {
     }
 
     if args.stdio {
-        // For SSH exec mode, use simple line-based I/O that works reliably
-        handle_ssh_stdio().await?;
+        // Test simple binary I/O directly without StdioAdapter
+        eprintln!("REMOTE_SERVER_LOG: Starting with simple binary I/O test");
+        handle_simple_binary_io().await?;
     } else {
         // Create a TCP listener
         let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
@@ -500,7 +501,6 @@ async fn handle_messages<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
     eprintln!("REMOTE_SERVER_LOG: handle_messages starting");
     
     for i in 0..10 {  // Limit iterations to avoid infinite hang
-        println!("Waiting for message... (iteration {})", i);
         eprintln!("REMOTE_SERVER_LOG: Waiting for message... (iteration {})", i);
 
         eprintln!("REMOTE_SERVER_LOG: About to call message_channel.receive()");
@@ -535,6 +535,67 @@ async fn handle_messages<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
         }
     }
 
+    Ok(())
+}
+
+/// Simple binary I/O test to check if the issue is with StdioAdapter
+async fn handle_simple_binary_io() -> Result<()> {
+    eprintln!("REMOTE_SERVER_LOG: handle_simple_binary_io starting");
+    
+    // Use tokio's async stdin/stdout directly
+    let mut stdin = tokio::io::stdin();
+    let mut stdout = tokio::io::stdout();
+    
+    let mut buffer = [0u8; 1024];
+    
+    for i in 0..10 {
+        eprintln!("REMOTE_SERVER_LOG: Iteration {}, waiting for data...", i);
+        
+        match tokio::time::timeout(std::time::Duration::from_secs(5), stdin.read(&mut buffer)).await {
+            Ok(Ok(n)) => {
+                eprintln!("REMOTE_SERVER_LOG: Read {} bytes from stdin", n);
+                eprintln!("REMOTE_SERVER_LOG: Raw bytes: {:?}", &buffer[..std::cmp::min(10, n)]);
+                
+                if n >= 2 {
+                    let length = u16::from_be_bytes([buffer[0], buffer[1]]);
+                    eprintln!("REMOTE_SERVER_LOG: Parsed length: {}", length);
+                    
+                    if n >= 2 + length as usize {
+                        let payload = &buffer[2..2 + length as usize];
+                        let payload_str = String::from_utf8_lossy(payload);
+                        eprintln!("REMOTE_SERVER_LOG: Payload: {:?}", payload_str);
+                        
+                        // Send echo response
+                        let response = format!("Echo: {}", payload_str);
+                        let response_bytes = response.as_bytes();
+                        let response_len = response_bytes.len() as u16;
+                        
+                        eprintln!("REMOTE_SERVER_LOG: Sending echo response, length: {}", response_len);
+                        
+                        stdout.write_u16(response_len).await?;
+                        stdout.write_all(response_bytes).await?;
+                        stdout.flush().await?;
+                        
+                        eprintln!("REMOTE_SERVER_LOG: Echo response sent");
+                        break;
+                    } else {
+                        eprintln!("REMOTE_SERVER_LOG: Incomplete message, expected {} more bytes", (2 + length as usize) - n);
+                    }
+                } else {
+                    eprintln!("REMOTE_SERVER_LOG: Not enough bytes for length header");
+                }
+            }
+            Ok(Err(e)) => {
+                eprintln!("REMOTE_SERVER_ERROR: Error reading from stdin: {}", e);
+                break;
+            }
+            Err(_) => {
+                eprintln!("REMOTE_SERVER_LOG: Timeout reading from stdin");
+                continue;
+            }
+        }
+    }
+    
     Ok(())
 }
 

@@ -263,8 +263,8 @@ pub mod client {
         // Create the adapter
         let ssh_adapter = SshChannelAdapter::new(handle, channel_id, data_rx);
 
-        // Create a message channel using text-safe mode for SSH compatibility  
-        let message_channel = MessageChannel::new_with_text_safe_mode(ssh_adapter);
+        // Create a message channel using binary mode
+        let message_channel = MessageChannel::new_with_stream(ssh_adapter);
 
         Ok(message_channel)
     }

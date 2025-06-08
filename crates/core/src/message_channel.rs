@@ -102,10 +102,16 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
 
         match self.mode {
             TransportMode::Binary => {
+                eprintln!("MSGCHAN_BINARY: sending binary message, payload_len: {}", payload_len);
+                eprintln!("MSGCHAN_BINARY: payload bytes: {:?}", &payload[..std::cmp::min(10, payload.len())]);
+                
                 // Write payload length (2 bytes, big endian)
+                let length_bytes = (payload_len as u16).to_be_bytes();
+                eprintln!("MSGCHAN_BINARY: sending length header: {:?}", length_bytes);
                 self.inner.write_u16(payload_len as u16).await?;
 
                 // Write payload
+                eprintln!("MSGCHAN_BINARY: sending payload of {} bytes", payload.len());
                 self.inner.write_all(&payload).await?;
             }
             TransportMode::TextSafe => {
@@ -131,29 +137,44 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
     }
 
     async fn receive_binary(&mut self) -> Result<Bytes> {
+        eprintln!("MSGCHAN_BINARY: receive_binary starting");
         loop {
+            eprintln!("MSGCHAN_BINARY: buffer length: {}", self.read_buffer.len());
+            if self.read_buffer.len() > 0 {
+                eprintln!("MSGCHAN_BINARY: buffer contents: {:?}", &self.read_buffer[..std::cmp::min(10, self.read_buffer.len())]);
+            }
+            
             // Try to read a complete message from the buffer
             if self.read_buffer.len() >= 2 {
                 // Read payload length without advancing the cursor
                 let payload_len =
                     u16::from_be_bytes([self.read_buffer[0], self.read_buffer[1]]) as usize;
+                eprintln!("MSGCHAN_BINARY: parsed payload length: {}", payload_len);
 
                 // Check if we have the complete message
                 if self.read_buffer.len() >= 2 + payload_len {
+                    eprintln!("MSGCHAN_BINARY: complete message available, extracting payload");
                     // Advance the cursor past the header
                     self.read_buffer.advance(2);
 
                     // Extract the payload
                     let payload = self.read_buffer.split_to(payload_len).freeze();
-
+                    eprintln!("MSGCHAN_BINARY: returning payload of {} bytes", payload.len());
                     return Ok(payload);
+                } else {
+                    eprintln!("MSGCHAN_BINARY: incomplete message, need {} more bytes", (2 + payload_len) - self.read_buffer.len());
                 }
+            } else {
+                eprintln!("MSGCHAN_BINARY: not enough bytes for header");
             }
 
             // Read more data into the buffer
+            eprintln!("MSGCHAN_BINARY: reading more data from stream");
             let bytes_read = self.inner.read_buf(&mut self.read_buffer).await?;
+            eprintln!("MSGCHAN_BINARY: read {} bytes from stream", bytes_read);
 
             if bytes_read == 0 {
+                eprintln!("MSGCHAN_BINARY: EOF on stream");
                 return Err(ChannelError::Closed);
             }
         }

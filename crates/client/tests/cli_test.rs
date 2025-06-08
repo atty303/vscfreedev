@@ -28,16 +28,13 @@ async fn test_ssh_connection() -> Result<()> {
 
     println!("Connected to remote host");
 
-    // Test the simple line-based approach by connecting to SSH manually
+    // Test message exchange
     let message = "Hello from E2E test!";
     println!("Sending message: {}", message);
     
-    // Create a simple line message
-    let line_message = format!("{}\n", message);
-    
-    // Send message using MessageChannel (which will fail as expected, but let's see the logs)
-    if let Err(e) = message_channel.send(Bytes::from(line_message)).await {
-        println!("MessageChannel send failed as expected: {}", e);
+    // Send message using MessageChannel
+    if let Err(e) = message_channel.send(Bytes::from(message)).await {
+        println!("MessageChannel send failed: {}", e);
         
         // Get and display container logs for debugging
         println!("---- Remote container logs ----");
