@@ -13,5 +13,3 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-uti
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 bytes = "1"
-libc = "0.2"
-base64 = "0.22"
