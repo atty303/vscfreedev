@@ -2,9 +2,8 @@
 
 use anyhow::Result;
 use tracing::{debug, warn, info, error};
-use russh::client::{Config, Handler, Handle, Session, connect};
+use russh::client::{Config, Handler, Handle, Session, connect, AuthResult};
 use russh::ChannelId;
-use russh_keys::key::PublicKey;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -59,27 +58,29 @@ impl MyHandler {
 impl Handler for MyHandler {
     type Error = russh::Error;
 
-    async fn check_server_key(
+    fn check_server_key(
         &mut self,
-        _server_public_key: &PublicKey,
-    ) -> Result<bool, Self::Error> {
-        Ok(true)
+        _server_public_key: &russh::keys::PublicKey,
+    ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send {
+        async { Ok(true) }
     }
 
-    async fn data(
+    fn data(
         &mut self,
         _channel: ChannelId,
         data: &[u8],
         _session: &mut Session,
-    ) -> Result<(), Self::Error> {
-        debug!("RusshHandler: Received {} bytes", data.len());
-        let data_tx_guard = self.data_tx.lock().await;
-        if let Some(ref tx) = *data_tx_guard {
-            if let Err(e) = tx.send(data.to_vec()) {
-                error!("RusshHandler: Failed to send data: {}", e);
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        async move {
+            debug!("RusshHandler: Received {} bytes", data.len());
+            let data_tx_guard = self.data_tx.lock().await;
+            if let Some(ref tx) = *data_tx_guard {
+                if let Err(e) = tx.send(data.to_vec()) {
+                    error!("RusshHandler: Failed to send data: {}", e);
+                }
             }
+            Ok(())
         }
-        Ok(())
     }
 }
 
@@ -176,7 +177,7 @@ impl AsyncWrite for SshChannelAdapter {
         // Attempt to send data immediately
         tokio::pin! {
             let send_fut = async move {
-                let mut handle_guard = handle.lock().await;
+                let handle_guard = handle.lock().await;
                 handle_guard.data(channel_id, data.clone().into()).await
                     .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "SSH data send failed"))
             };
@@ -233,15 +234,19 @@ pub mod client {
         if let Some(password) = password {
             debug!("Authenticating with password");
             let auth_result = handle.authenticate_password(username, password).await?;
-            if !auth_result {
+            if !matches!(auth_result, AuthResult::Success) {
                 return Err(ClientError::Connection("Password authentication failed".to_string()));
             }
         } else if let Some(key_path) = key_path {
             debug!("Authenticating with key: {:?}", key_path);
             let key_str = std::fs::read_to_string(key_path)?;
-            let key = russh_keys::decode_secret_key(&key_str, None)?;
-            let auth_result = handle.authenticate_publickey(username, Arc::new(key)).await?;
-            if !auth_result {
+            let _key = russh_keys::decode_secret_key(&key_str, None)?;
+            // Convert from russh_keys::PrivateKey to russh::keys::PrivateKey
+            let russh_key = russh::keys::PrivateKey::from_openssh(&key_str)
+                .map_err(|e| ClientError::Connection(format!("Failed to parse key: {}", e)))?;
+            let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(russh_key), None);
+            let auth_result = handle.authenticate_publickey(username, key_with_hash).await?;
+            if !matches!(auth_result, AuthResult::Success) {
                 return Err(ClientError::Connection("Key authentication failed".to_string()));
             }
         } else {
@@ -251,7 +256,7 @@ pub mod client {
         info!("Authentication successful");
 
         // Create a channel
-        let mut channel = handle.channel_open_session().await?;
+        let channel = handle.channel_open_session().await?;
         let channel_id = channel.id();
         debug!("Created SSH channel: {:?}", channel_id);
 

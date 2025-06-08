@@ -1,7 +1,11 @@
 [package]
 name = "vscfreedev-gui"
-version = "0.0.1"
-edition = "2024"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+authors = { workspace = true }
+description = "Graphical user interface for vscfreedev"
 
 [dependencies]
 tracing = { workspace = true }

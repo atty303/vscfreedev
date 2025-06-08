@@ -1,22 +1,26 @@
 [package]
 name = "vscfreedev-client"
-version = "0.0.1"
-edition = "2024"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+authors = { workspace = true }
+description = "Client library for connecting to remote vscfreedev servers"
 
 [dependencies]
 vscfreedev-core = { workspace = true }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs", "process"] }
-anyhow = "1"
-thiserror = "2"
-russh = "0.45"
-russh-keys = "0.45"
-async-trait = "0.1"
-futures = "0.3"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs", "process"] }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+russh = { workspace = true }
+russh-keys = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
 tracing = { workspace = true }
 
 [build-dependencies]
 
 [dev-dependencies]
-tempfile = "3.8"
-rand = "0.9"
-bytes = "1.0"
+tempfile = { workspace = true }
+rand = { workspace = true }
+bytes = { workspace = true }

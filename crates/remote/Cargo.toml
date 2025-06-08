@@ -1,7 +1,11 @@
 [package]
 name = "vscfreedev-remote"
-version = "0.0.1"
-edition = "2024"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+authors = { workspace = true }
+description = "Remote server component for vscfreedev"
 
 [[bin]]
 name = "vscfreedev-remote"
@@ -9,9 +13,9 @@ path = "src/main.rs"
 
 [dependencies]
 vscfreedev-core = { workspace = true }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs", "io-std"] }
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-bytes = "1"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs", "io-std"] }
+anyhow = { workspace = true }
+clap = { workspace = true }
+bytes = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

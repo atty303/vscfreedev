@@ -1,14 +1,18 @@
 [package]
 name = "vscfreedev-cli"
-version = "0.0.1"
-edition = "2024"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+authors = { workspace = true }
+description = "Command-line interface for vscfreedev"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util"] }
+clap = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs", "io-util"] }
 vscfreedev-core = { workspace = true }
 vscfreedev-client = { workspace = true }
-anyhow = "1"
-bytes = "1"
+anyhow = { workspace = true }
+bytes = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
