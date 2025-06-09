@@ -1,21 +1,21 @@
 use anyhow::Result;
-use yuha_core::port_forward::PortForwardMessage;
+use yuha_core::protocol::YuhaRequest;
 
 #[tokio::test]
-async fn test_port_forward_message_serialization() -> Result<()> {
+async fn test_protocol_message_serialization() -> Result<()> {
     // Test basic message serialization
-    let start_request = PortForwardMessage::StartRequest {
+    let start_request = YuhaRequest::StartPortForward {
         local_port: 8080,
         remote_host: "localhost".to_string(),
         remote_port: 80,
     };
 
     let json = serde_json::to_string(&start_request)?;
-    println!("StartRequest JSON: {}", json);
+    println!("StartPortForward JSON: {}", json);
 
-    let parsed: PortForwardMessage = serde_json::from_str(&json)?;
+    let parsed: YuhaRequest = serde_json::from_str(&json)?;
     match parsed {
-        PortForwardMessage::StartRequest {
+        YuhaRequest::StartPortForward {
             local_port,
             remote_host,
             remote_port,

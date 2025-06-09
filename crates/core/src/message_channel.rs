@@ -4,6 +4,8 @@ use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+use crate::protocol::{YuhaRequest, YuhaResponse};
+
 /// Error types for the message channel
 #[derive(Error, Debug)]
 pub enum ChannelError {
@@ -55,7 +57,38 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
             read_buffer: BytesMut::with_capacity(4096),
         }
     }
-    /// Send a message over the channel
+
+    /// Send a request over the channel
+    pub async fn send_request(&mut self, request: &YuhaRequest) -> Result<()> {
+        let json_data = serde_json::to_vec(request)
+            .map_err(|e| ChannelError::Protocol(format!("JSON serialization error: {}", e)))?;
+
+        self.send(Bytes::from(json_data)).await
+    }
+
+    /// Send a response over the channel
+    pub async fn send_response(&mut self, response: &YuhaResponse) -> Result<()> {
+        let json_data = serde_json::to_vec(response)
+            .map_err(|e| ChannelError::Protocol(format!("JSON serialization error: {}", e)))?;
+
+        self.send(Bytes::from(json_data)).await
+    }
+
+    /// Receive a request from the channel
+    pub async fn receive_request(&mut self) -> Result<YuhaRequest> {
+        let payload = self.receive().await?;
+        serde_json::from_slice(&payload)
+            .map_err(|e| ChannelError::Protocol(format!("JSON deserialization error: {}", e)))
+    }
+
+    /// Receive a response from the channel
+    pub async fn receive_response(&mut self) -> Result<YuhaResponse> {
+        let payload = self.receive().await?;
+        serde_json::from_slice(&payload)
+            .map_err(|e| ChannelError::Protocol(format!("JSON deserialization error: {}", e)))
+    }
+
+    /// Send a raw message over the channel
     pub async fn send(&mut self, payload: Bytes) -> Result<()> {
         let payload_len = payload.len();
 
