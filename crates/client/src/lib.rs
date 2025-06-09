@@ -192,6 +192,8 @@ impl AsyncWrite for SshChannelAdapter {
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
+        // For SSH channels, data is sent immediately via the handle
+        debug!("SshChannelAdapter::poll_flush called");
         Poll::Ready(Ok(()))
     }
 
@@ -236,9 +238,9 @@ async fn transfer_binary_to_remote(
         ClientError::BinaryTransfer(format!("Failed to open verification channel: {}", e))
     })?;
 
-    // Check if the target directory exists
+    // Check if the target directory exists (redirect output to stderr)
     verify_channel
-        .exec(false, b"ls -la /tmp/")
+        .exec(false, b"ls -la /tmp/ >&2")
         .await
         .map_err(|e| {
             ClientError::BinaryTransfer(format!("Failed to verify tmp directory: {}", e))
@@ -362,8 +364,9 @@ async fn transfer_binary_to_remote(
         ClientError::BinaryTransfer(format!("Failed to open second verification channel: {}", e))
     })?;
 
+    // First verify the file exists and has correct permissions (redirect output to stderr)
     let verify_command = format!(
-        "ls -la {} && echo 'File exists' && {} --help && echo 'Binary is executable'",
+        "ls -la {} >&2 && file {} >&2",
         remote_temp_path, remote_temp_path
     );
     verify_channel2
@@ -372,6 +375,21 @@ async fn transfer_binary_to_remote(
         .map_err(|e| {
             ClientError::BinaryTransfer(format!("Failed to verify transferred binary: {}", e))
         })?;
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+    // Test if the binary can show help (quick test)
+    let help_channel = handle.channel_open_session().await.map_err(|e| {
+        ClientError::BinaryTransfer(format!("Failed to open help test channel: {}", e))
+    })?;
+
+    let help_command = format!("{} --help >&2", remote_temp_path);
+    info!("Testing binary with --help command: {}", help_command);
+
+    help_channel
+        .exec(false, help_command.as_bytes())
+        .await
+        .map_err(|e| ClientError::BinaryTransfer(format!("Failed to test binary help: {}", e)))?;
 
     info!("Binary transferred successfully to {}", remote_temp_path);
 
@@ -458,16 +476,62 @@ pub mod client {
         debug!("Created SSH channel: {:?}", channel_id);
 
         // Execute the remote command (now always uses simple protocol)
-        let command = format!("{} --stdio 2>/tmp/remote_stderr.log", remote_path);
-        debug!("Executing remote command: {}", command);
+        let stderr_log = if auto_upload_binary {
+            format!("/tmp/remote_stderr_{}.log", std::process::id())
+        } else {
+            "/tmp/remote_stderr.log".to_string()
+        };
+
+        let command = format!("{} --stdio 2>{}", remote_path, stderr_log);
+        info!("Executing remote command: {}", command);
 
         // Execute the command using channel exec
         match channel.exec(false, command.as_bytes()).await {
             Ok(_) => {
-                debug!("Remote command executed successfully");
+                info!("Remote command executed successfully");
 
                 // Give the remote server a moment to start up
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+                // If auto-upload, verify the remote server is still running
+                if auto_upload_binary {
+                    let check_channel = handle.channel_open_session().await?;
+                    let check_command = format!(
+                        "ps aux | grep {} | grep -v grep >&2 || echo 'Process not found' >&2",
+                        remote_path
+                    );
+                    info!("Checking if remote server is running: {}", check_command);
+
+                    check_channel
+                        .exec(false, check_command.as_bytes())
+                        .await
+                        .map_err(|e| {
+                            ClientError::RemoteExecution(format!(
+                                "Failed to check remote server status: {}",
+                                e
+                            ))
+                        })?;
+
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+                    // Also check error logs (redirect to stderr)
+                    let log_channel = handle.channel_open_session().await?;
+                    let log_command = format!(
+                        "test -f {} && cat {} >&2 || echo 'No error log found' >&2",
+                        stderr_log, stderr_log
+                    );
+                    info!("Checking error logs: {}", log_command);
+
+                    log_channel
+                        .exec(false, log_command.as_bytes())
+                        .await
+                        .map_err(|e| {
+                            ClientError::RemoteExecution(format!(
+                                "Failed to check error logs: {}",
+                                e
+                            ))
+                        })?;
+                }
             }
             Err(e) => {
                 error!("Failed to execute remote command '{}': {}", command, e);

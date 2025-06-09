@@ -34,10 +34,10 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> S
             .await
             .map_err(|e| ClientError::Channel(format!("Failed to send request: {}", e)))?;
 
-        // Wait for response with timeout
-        let response = tokio::time::timeout(Duration::from_secs(30), channel.receive_response())
+        // Wait for response with timeout - give more time for server processing
+        let response = tokio::time::timeout(Duration::from_secs(60), channel.receive_response())
             .await
-            .map_err(|_| ClientError::Channel("Request timeout after 30 seconds".to_string()))?
+            .map_err(|_| ClientError::Channel("Request timeout after 60 seconds".to_string()))?
             .map_err(|e| ClientError::Channel(format!("Failed to receive response: {}", e)))?;
 
         debug!("Received response: {:?}", response);
