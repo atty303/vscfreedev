@@ -37,13 +37,13 @@ async fn test_port_forwarding_single_with_auto_upload() -> Result<()> {
         local_port, remote_port
     );
 
+    let start_time = std::time::Instant::now();
     client
         .start_port_forward(local_port, "localhost".to_string(), remote_port)
         .await?;
+    let elapsed = start_time.elapsed();
 
-    // Give some time for the port forward to be established
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
+    println!("Port forwarding setup took: {:?}", elapsed);
     println!("Single port forwarding test with auto-upload completed successfully");
     Ok(())
 }
@@ -131,8 +131,8 @@ async fn test_port_forwarding_stop_with_auto_upload() -> Result<()> {
         .start_port_forward(local_port, "localhost".to_string(), remote_port)
         .await?;
 
-    // Give some time for the port forward to be established
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Port forwarding should be established immediately
+    // No need to wait - the listener should be up and ready
 
     // Stop port forwarding
     println!("Stopping port forward on port {}", local_port);

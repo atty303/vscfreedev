@@ -113,7 +113,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
 
     /// Receive a message from the channel
     pub async fn receive(&mut self) -> Result<Bytes> {
-        match tokio::time::timeout(std::time::Duration::from_secs(10), self.receive_binary()).await
+        match tokio::time::timeout(std::time::Duration::from_secs(30), self.receive_binary()).await
         {
             Ok(result) => result,
             Err(_timeout) => {

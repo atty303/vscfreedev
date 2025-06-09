@@ -141,8 +141,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
 
     /// Wait for data with timeout
     async fn wait_for_data(&self) {
-        for _ in 0..10 {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+        for _ in 0..20 {
+            tokio::time::sleep(Duration::from_millis(25)).await;
             let buffer = self.response_buffer.read().await;
             if buffer.has_data() {
                 break;
@@ -174,7 +174,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
                 tokio::spawn(async move {
                     loop {
                         match listener.accept().await {
-                            Ok((stream, addr)) => {
+                            Ok((client_stream, addr)) => {
                                 let connection_id = {
                                     let mut id = next_connection_id.write().await;
                                     let current = *id;
@@ -187,38 +187,45 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
                                     connection_id, addr, local_port
                                 );
 
-                                // Notify client of new connection
-                                {
-                                    let mut buffer = response_buffer.write().await;
-                                    buffer.add_new_connection(connection_id, local_port);
-                                }
-
-                                // Connect to target server
                                 let target_addr = format!("{}:{}", remote_host, remote_port);
-                                match tokio::net::TcpStream::connect(&target_addr).await {
-                                    Ok(target_stream) => {
-                                        let (tx, rx) = mpsc::unbounded_channel();
-                                        {
-                                            let mut connections = active_connections.write().await;
-                                            connections.insert(connection_id, tx);
-                                        }
+                                let response_buffer_clone = response_buffer.clone();
+                                let active_connections_clone = active_connections.clone();
 
-                                        Self::handle_connection(
-                                            stream,
-                                            target_stream,
-                                            connection_id,
-                                            response_buffer.clone(),
-                                            active_connections.clone(),
-                                            rx,
-                                        )
-                                        .await;
+                                // Handle each connection in a separate task
+                                tokio::spawn(async move {
+                                    // Notify client of new connection
+                                    {
+                                        let mut buffer = response_buffer_clone.write().await;
+                                        buffer.add_new_connection(connection_id, local_port);
                                     }
-                                    Err(e) => {
-                                        error!("Failed to connect to {}: {}", target_addr, e);
-                                        let mut buffer = response_buffer.write().await;
-                                        buffer.add_close_connection(connection_id);
+
+                                    // Connect to target server
+                                    match tokio::net::TcpStream::connect(&target_addr).await {
+                                        Ok(target_stream) => {
+                                            let (tx, rx) = mpsc::unbounded_channel();
+                                            {
+                                                let mut connections =
+                                                    active_connections_clone.write().await;
+                                                connections.insert(connection_id, tx);
+                                            }
+
+                                            Self::handle_connection(
+                                                client_stream,
+                                                target_stream,
+                                                connection_id,
+                                                response_buffer_clone,
+                                                active_connections_clone,
+                                                rx,
+                                            )
+                                            .await;
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to connect to {}: {}", target_addr, e);
+                                            let mut buffer = response_buffer_clone.write().await;
+                                            buffer.add_close_connection(connection_id);
+                                        }
                                     }
-                                }
+                                });
                             }
                             Err(e) => {
                                 error!("Error accepting connection: {}", e);
