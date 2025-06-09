@@ -169,7 +169,7 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> S
                 }
                 Err(e) => {
                     warn!("Error polling data: {}", e);
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    tokio::time::sleep(Duration::from_millis(10)).await;
                 }
             }
 

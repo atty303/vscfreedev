@@ -135,8 +135,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
 
     /// Wait for data with timeout
     async fn wait_for_data(&self) {
-        for _ in 0..20 {
-            tokio::time::sleep(Duration::from_millis(25)).await;
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
             let buffer = self.response_buffer.read().await;
             if buffer.has_data() {
                 break;

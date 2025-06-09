@@ -238,7 +238,7 @@ async fn transfer_binary_to_remote(
             })?;
 
         // Give the command time to complete
-        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        // No artificial delay needed for proper async operation
     } else {
         // For larger files, use chunked transfer
         info!(
@@ -265,7 +265,7 @@ async fn transfer_binary_to_remote(
                 ClientError::BinaryTransfer(format!("Failed to start chunked transfer: {}", e))
             })?;
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        // No artificial delay needed for proper async operation
 
         // Remaining chunks - append to the file
         for (i, chunk) in chunks[1..].iter().enumerate() {
@@ -290,7 +290,7 @@ async fn transfer_binary_to_remote(
                     ))
                 })?;
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            // No artificial delay needed between chunks
         }
 
         // Set executable permissions
@@ -306,7 +306,7 @@ async fn transfer_binary_to_remote(
                 ClientError::BinaryTransfer(format!("Failed to set executable permissions: {}", e))
             })?;
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        // No artificial delay needed for proper async operation
     }
 
     info!("Binary transferred successfully to {}", remote_temp_path);
@@ -405,7 +405,7 @@ pub mod client {
             Ok(_) => {
                 info!("Remote command executed successfully");
 
-                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                // No artificial delay needed for proper async operation
             }
             Err(e) => {
                 error!("Failed to execute remote command '{}': {}", command, e);
