@@ -1,4 +1,5 @@
 # yuha
+![yuha-removebg-preview](https://github.com/user-attachments/assets/eac30298-b8f3-4d6a-bf8c-a5a46e2ce5dd)
 
 ## crates
 
