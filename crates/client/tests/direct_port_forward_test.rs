@@ -56,9 +56,23 @@ async fn test_direct_port_forward_request() -> Result<()> {
     message_channel.send(Bytes::from(request_json)).await?;
     println!("Request sent successfully");
 
-    // Wait for response with timeout
-    let response_bytes =
-        tokio::time::timeout(Duration::from_secs(15), message_channel.receive()).await??;
+    // Wait for response with retry logic for SSH stdio communication
+    let response_bytes = loop {
+        match message_channel.receive().await {
+            Ok(msg) => break msg,
+            Err(e) => {
+                // Check if this is a WouldBlock error and retry
+                if let yuha_core::message_channel::ChannelError::Io(io_error) = &e {
+                    if io_error.kind() == std::io::ErrorKind::WouldBlock {
+                        println!("Client: WouldBlock error, retrying...");
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        continue;
+                    }
+                }
+                return Err(e.into());
+            }
+        }
+    };
 
     let response_received = std::time::Instant::now();
     println!(

@@ -80,7 +80,20 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
 
     /// Receive a message from the channel
     pub async fn receive(&mut self) -> Result<Bytes> {
-        self.receive_binary().await
+        // For SSH stdio communication, we need to handle the case where
+        // read_buf might block indefinitely. Use a reasonable timeout.
+        match tokio::time::timeout(std::time::Duration::from_millis(500), self.receive_binary())
+            .await
+        {
+            Ok(result) => result,
+            Err(_timeout) => {
+                // Return WouldBlock error to allow the caller to retry
+                Err(ChannelError::Io(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "Read operation would block",
+                )))
+            }
+        }
     }
 
     async fn receive_binary(&mut self) -> Result<Bytes> {

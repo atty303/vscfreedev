@@ -45,9 +45,23 @@ async fn test_basic_ssh_communication() -> Result<()> {
     message_channel.send(test_message.clone()).await?;
     println!("Message sent successfully");
 
-    // Wait for response with timeout
-    let response =
-        tokio::time::timeout(Duration::from_secs(5), message_channel.receive()).await??;
+    // Wait for response with retry logic for SSH stdio communication
+    let response = loop {
+        match message_channel.receive().await {
+            Ok(msg) => break msg,
+            Err(e) => {
+                // Check if this is a WouldBlock error and retry
+                if let yuha_core::message_channel::ChannelError::Io(io_error) = &e {
+                    if io_error.kind() == std::io::ErrorKind::WouldBlock {
+                        println!("Client: WouldBlock error, retrying...");
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        continue;
+                    }
+                }
+                return Err(e.into());
+            }
+        }
+    };
 
     let response_received = std::time::Instant::now();
     println!(

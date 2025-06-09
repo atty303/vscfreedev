@@ -11,7 +11,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf, Std
 use tokio::net::TcpSocket;
 use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, error, info, warn};
-use yuha_core::message_channel::MessageChannel;
+use yuha_core::message_channel::{ChannelError, MessageChannel};
 use yuha_core::port_forward::{PortForwardManager, PortForwardMessage};
 
 /// Type alias for active connections map
@@ -169,12 +169,9 @@ async fn handle_messages<
     loop {
         tokio::select! {
             // Handle incoming messages from client
-            result = tokio::time::timeout(
-                std::time::Duration::from_millis(200),
-                message_channel.receive(),
-            ) => {
+            result = message_channel.receive() => {
                 match result {
-            Ok(Ok(message)) => {
+            Ok(message) => {
                 debug!("REMOTE_SERVER_LOG: Message received successfully");
                 let message_str = String::from_utf8_lossy(&message);
                 info!("Received message: {}", message_str);
@@ -237,13 +234,18 @@ async fn handle_messages<
                     }
                 }
             }
-                    Ok(Err(e)) => {
-                        error!("REMOTE_SERVER_ERROR: Error receiving message: {}", e);
-                        break;
-                    }
-                    Err(_timeout) => {
-                        debug!("REMOTE_SERVER_LOG: Timeout waiting for message, continuing...");
-                        continue;
+                    Err(e) => {
+                        // Check if this is a WouldBlock error (timeout from SSH stdio communication)
+                        match e {
+                            ChannelError::Io(io_error) if io_error.kind() == std::io::ErrorKind::WouldBlock => {
+                                // SSH stdio communication timeout - continue to next iteration
+                                continue;
+                            }
+                            _ => {
+                                error!("REMOTE_SERVER_ERROR: Error receiving message: {}", e);
+                                break;
+                            }
+                        }
                     }
                 }
             }
