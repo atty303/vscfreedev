@@ -22,7 +22,7 @@ RUN apt-get update && \
     sed -i 's/#LogLevel INFO/LogLevel DEBUG/' /etc/ssh/sshd_config
 
 # Copy the remote server binary
-COPY vscfreedev_remote /usr/local/bin/
+COPY vscfreedev_remote /usr/local/bin/vscfreedev-remote
 
 # Expose SSH port and test service port
 EXPOSE 22 8888
@@ -31,7 +31,7 @@ EXPOSE 22 8888
 RUN mkdir -p /var/log/vscfreedev
 
 # Start SSH server and test echo service
-RUN echo '#!/bin/bash\n/usr/sbin/sshd -E /var/log/sshd.log\necho "SSH server started"\n# Start a simple echo service on port 8888\nnc -l -p 8888 -k -e /bin/cat &\necho "Echo service started on port 8888"\necho "Waiting for remote server files..."\nwhile true; do\n  if [ -f /tmp/remote_help.txt ]; then\n    echo "=== Remote Server Help File ==="\n    cat /tmp/remote_help.txt\n    echo "=============================="\n    break\n  fi\n  sleep 1\ndone\ntail -f /var/log/sshd.log /tmp/remote.log /tmp/remote_fallback.log /tmp/remote_panic.log /tmp/remote_stderr.log /tmp/remote_panic.txt /tmp/remote_startup.txt /tmp/remote_help.txt 2>/dev/null || true\nwhile true; do sleep 1; done' > /start.sh && \
+RUN echo '#!/bin/bash\n/usr/sbin/sshd -E /var/log/sshd.log\necho "SSH server started"\n# Start a simple echo service on port 8888\nsocat TCP-LISTEN:8888,fork,reuseaddr EXEC:/bin/cat &\necho "Echo service started on port 8888"\necho "Waiting for remote server files..."\nwhile true; do\n  if [ -f /tmp/remote_help.txt ]; then\n    echo "=== Remote Server Help File ==="\n    cat /tmp/remote_help.txt\n    echo "=============================="\n    break\n  fi\n  sleep 1\ndone\ntail -f /var/log/sshd.log /tmp/remote.log /tmp/remote_fallback.log /tmp/remote_panic.log /tmp/remote_stderr.log /tmp/remote_panic.txt /tmp/remote_startup.txt /tmp/remote_help.txt 2>/dev/null || true\nwhile true; do sleep 1; done' > /start.sh && \
     chmod +x /start.sh
 CMD ["/start.sh"]
 "#;

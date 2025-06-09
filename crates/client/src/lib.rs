@@ -9,6 +9,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tracing::{debug, error, info, warn};
@@ -210,29 +211,60 @@ pub struct VscFreedevClient {
     next_connection_id: Arc<RwLock<u32>>,
     // Channel for control message responses
     control_response_rx: Arc<Mutex<mpsc::UnboundedReceiver<PortForwardMessage>>>,
+    // Flag to track if message handler has been started
+    message_handler_started: Arc<RwLock<bool>>,
 }
 
 impl VscFreedevClient {
     /// Create a new client with an existing message channel
     pub fn new(message_channel: MessageChannel<SshChannelAdapter>) -> Self {
-        let (control_response_tx, control_response_rx) = mpsc::unbounded_channel();
+        let (_control_response_tx, control_response_rx) = mpsc::unbounded_channel();
 
-        let client = Self {
+        Self {
             message_channel: Arc::new(Mutex::new(message_channel)),
             port_forward_manager: PortForwardManager::new(),
             active_connections: Arc::new(RwLock::new(HashMap::new())),
             next_connection_id: Arc::new(RwLock::new(1)),
             control_response_rx: Arc::new(Mutex::new(control_response_rx)),
-        };
+            message_handler_started: Arc::new(RwLock::new(false)),
+        }
+    }
 
-        // Start the message handler once when the client is created
-        let message_channel = client.message_channel.clone();
-        let active_connections = client.active_connections.clone();
+    /// Start the port forward message handler (only when needed)
+    async fn ensure_message_handler_started(&self) {
+        let mut started = self.message_handler_started.write().await;
+        if *started {
+            debug!("Message handler already started, returning");
+            return;
+        }
+        debug!("Starting message handler for the first time");
+        *started = true;
 
+        let (control_response_tx, new_control_rx) = mpsc::unbounded_channel();
+
+        // Replace the control response receiver
+        {
+            let mut control_rx = self.control_response_rx.lock().await;
+            *control_rx = new_control_rx;
+        }
+
+        let message_channel_clone = self.message_channel.clone();
+        let active_connections_clone = self.active_connections.clone();
+
+        // Use a one-shot channel to ensure the background task is ready before proceeding
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+
+        debug!("Spawning background message handler task");
         tokio::spawn(async move {
+            debug!("Background message handler task started, entering receive loop");
+
+            // Signal that the task is ready
+            let _ = ready_tx.send(());
+
             loop {
+                debug!("Message handler waiting for next message from remote...");
                 let message_bytes = {
-                    let mut channel = message_channel.lock().await;
+                    let mut channel = message_channel_clone.lock().await;
                     match channel.receive().await {
                         Ok(bytes) => bytes,
                         Err(e) => {
@@ -243,17 +275,28 @@ impl VscFreedevClient {
                 };
 
                 let message_str = String::from_utf8_lossy(&message_bytes);
+                debug!("Message handler received message: {}", message_str);
 
                 // Try to parse as port forward message
                 if let Ok(port_forward_msg) =
                     serde_json::from_str::<PortForwardMessage>(&message_str)
                 {
+                    debug!(
+                        "Successfully parsed as port forward message: {:?}",
+                        port_forward_msg
+                    );
                     match port_forward_msg {
                         PortForwardMessage::StartResponse { .. }
                         | PortForwardMessage::StopResponse { .. } => {
                             // Route control responses to the control channel
+                            debug!(
+                                "Routing control response to control channel: {:?}",
+                                port_forward_msg
+                            );
                             if let Err(e) = control_response_tx.send(port_forward_msg) {
                                 error!("Failed to send control response: {}", e);
+                            } else {
+                                debug!("Control response sent successfully");
                             }
                         }
                         PortForwardMessage::Data {
@@ -268,7 +311,7 @@ impl VscFreedevClient {
                                 local_port
                             );
 
-                            let connections = active_connections.read().await;
+                            let connections = active_connections_clone.read().await;
                             if let Some(port_connections) = connections.get(&local_port) {
                                 if let Some(sender) = port_connections.get(&connection_id) {
                                     if let Err(e) = sender.send(Bytes::from(data)) {
@@ -289,7 +332,7 @@ impl VscFreedevClient {
                                 connection_id, local_port
                             );
 
-                            let mut connections = active_connections.write().await;
+                            let mut connections = active_connections_clone.write().await;
                             if let Some(port_connections) = connections.get_mut(&local_port) {
                                 port_connections.remove(&connection_id);
                             }
@@ -304,7 +347,13 @@ impl VscFreedevClient {
             }
         });
 
-        client
+        // Wait for the background task to be ready before proceeding
+        debug!("Waiting for background message handler to be ready...");
+        if (ready_rx.await).is_err() {
+            error!("Background message handler failed to start");
+        } else {
+            debug!("Background message handler is ready");
+        }
     }
 
     /// Get next connection ID
@@ -323,6 +372,9 @@ impl VscFreedevClient {
         remote_host: &str,
         remote_port: u16,
     ) -> Result<(), ClientError> {
+        // Use direct request-response instead of background handler for simplicity
+        debug!("Starting port forward using direct request-response approach");
+
         // Create the port forward request
         let request = PortForwardMessage::StartRequest {
             local_port,
@@ -334,22 +386,30 @@ impl VscFreedevClient {
         let request_json = serde_json::to_string(&request)
             .map_err(|e| ClientError::Channel(format!("Failed to serialize request: {}", e)))?;
 
-        // Send the request
-        {
+        // Send the request and wait for response directly
+        let response_bytes = {
             let mut channel = self.message_channel.lock().await;
+            debug!("Sending port forward request: {}", request_json);
             channel
                 .send(Bytes::from(request_json))
                 .await
                 .map_err(|e| ClientError::Channel(format!("Failed to send request: {}", e)))?;
-        }
+            debug!("Port forward request sent successfully");
 
-        // Wait for response on the control channel
-        let response = {
-            let mut control_rx = self.control_response_rx.lock().await;
-            control_rx.recv().await.ok_or_else(|| {
-                ClientError::Channel("Control response channel closed".to_string())
-            })?
+            debug!("Waiting for direct response...");
+            tokio::time::timeout(Duration::from_secs(15), channel.receive())
+                .await
+                .map_err(|_| ClientError::Channel("Response timeout after 15 seconds".to_string()))?
+                .map_err(|e| ClientError::Channel(format!("Failed to receive response: {}", e)))?
         };
+
+        // Parse the response
+        let response_str = String::from_utf8_lossy(&response_bytes);
+        debug!("Received response: {}", response_str);
+
+        let response: PortForwardMessage = serde_json::from_str(&response_str)
+            .map_err(|e| ClientError::Channel(format!("Failed to parse response: {}", e)))?;
+        debug!("Parsed response: {:?}", response);
 
         match response {
             PortForwardMessage::StartResponse { success: true, .. } => {
@@ -525,6 +585,9 @@ impl VscFreedevClient {
 
     /// Stop port forwarding for a local port
     pub async fn stop_port_forward(&self, local_port: u16) -> Result<(), ClientError> {
+        // Ensure the message handler is started before sending requests
+        self.ensure_message_handler_started().await;
+
         // Create the stop request
         let request = PortForwardMessage::StopRequest { local_port };
 
@@ -693,7 +756,7 @@ pub mod client {
         debug!("Created SSH channel: {:?}", channel_id);
 
         // Execute the remote command
-        let remote_path = "/usr/local/bin/vscfreedev_remote";
+        let remote_path = "/usr/local/bin/vscfreedev-remote";
         let command = format!("{} -s 2>/tmp/remote_stderr.log", remote_path);
         debug!("Executing command: {}", command);
 

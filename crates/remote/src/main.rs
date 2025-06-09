@@ -3,8 +3,10 @@ use bytes::Bytes;
 use clap::Parser;
 use std::collections::HashMap;
 use std::io::Write;
+use std::pin::Pin;
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf, Stdin, Stdout};
 use tokio::net::TcpStream;
 use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, error, info, warn};
@@ -13,6 +15,46 @@ use vscfreedev_core::port_forward::{PortForwardManager, PortForwardMessage};
 
 /// Type alias for active connections map
 type ActiveConnections = Arc<RwLock<HashMap<(u16, u32), mpsc::UnboundedSender<Bytes>>>>;
+
+/// A stream that combines stdin and stdout for bidirectional communication
+pub struct StdioStream {
+    stdin: Stdin,
+    stdout: Stdout,
+}
+
+impl StdioStream {
+    pub fn new(stdin: Stdin, stdout: Stdout) -> Self {
+        Self { stdin, stdout }
+    }
+}
+
+impl AsyncRead for StdioStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stdin).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for StdioStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.stdout).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stdout).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stdout).poll_shutdown(cx)
+    }
+}
 
 /// Remote server for vscfreedev
 #[derive(Parser, Debug)]
@@ -88,9 +130,15 @@ async fn main() -> Result<()> {
     }
 
     if args.stdio {
-        // Test simple binary I/O directly without StdioAdapter
-        debug!("REMOTE_SERVER_LOG: Starting with simple binary I/O test");
-        handle_simple_binary_io().await?;
+        // Create a stdio-based message channel for port forwarding
+        debug!("REMOTE_SERVER_LOG: Starting with stdio-based message channel");
+
+        // Create a combined stdin/stdout stream
+        let stdin = tokio::io::stdin();
+        let stdout = tokio::io::stdout();
+        let stdio_stream = StdioStream::new(stdin, stdout);
+        let mut message_channel = MessageChannel::new_with_stream(stdio_stream);
+        handle_messages(&mut message_channel).await?;
     } else {
         // Create a TCP listener
         let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
@@ -457,75 +505,4 @@ async fn handle_port_forward_message(
             }
         }
     }
-}
-
-/// Simple binary I/O test to check if the issue is with StdioAdapter
-async fn handle_simple_binary_io() -> Result<()> {
-    debug!("REMOTE_SERVER_LOG: handle_simple_binary_io starting");
-
-    // Use tokio's async stdin/stdout directly
-    let mut stdin = tokio::io::stdin();
-    let mut stdout = tokio::io::stdout();
-
-    let mut buffer = [0u8; 1024];
-
-    for i in 0..10 {
-        debug!("REMOTE_SERVER_LOG: Iteration {}, waiting for data...", i);
-
-        match tokio::time::timeout(std::time::Duration::from_secs(5), stdin.read(&mut buffer)).await
-        {
-            Ok(Ok(n)) => {
-                debug!("REMOTE_SERVER_LOG: Read {} bytes from stdin", n);
-                debug!(
-                    "REMOTE_SERVER_LOG: Raw bytes: {:?}",
-                    &buffer[..std::cmp::min(10, n)]
-                );
-
-                if n >= 2 {
-                    let length = u16::from_be_bytes([buffer[0], buffer[1]]);
-                    debug!("REMOTE_SERVER_LOG: Parsed length: {}", length);
-
-                    if n >= 2 + length as usize {
-                        let payload = &buffer[2..2 + length as usize];
-                        let payload_str = String::from_utf8_lossy(payload);
-                        debug!("REMOTE_SERVER_LOG: Payload: {:?}", payload_str);
-
-                        // Send echo response
-                        let response = format!("Echo: {}", payload_str);
-                        let response_bytes = response.as_bytes();
-                        let response_len = response_bytes.len() as u16;
-
-                        debug!(
-                            "REMOTE_SERVER_LOG: Sending echo response, length: {}",
-                            response_len
-                        );
-
-                        stdout.write_u16(response_len).await?;
-                        stdout.write_all(response_bytes).await?;
-                        stdout.flush().await?;
-
-                        debug!("REMOTE_SERVER_LOG: Echo response sent");
-                        break;
-                    } else {
-                        warn!(
-                            "REMOTE_SERVER_LOG: Incomplete message, expected {} more bytes",
-                            (2 + length as usize) - n
-                        );
-                    }
-                } else {
-                    warn!("REMOTE_SERVER_LOG: Not enough bytes for length header");
-                }
-            }
-            Ok(Err(e)) => {
-                error!("REMOTE_SERVER_ERROR: Error reading from stdin: {}", e);
-                break;
-            }
-            Err(_) => {
-                debug!("REMOTE_SERVER_LOG: Timeout reading from stdin");
-                continue;
-            }
-        }
-    }
-
-    Ok(())
 }
