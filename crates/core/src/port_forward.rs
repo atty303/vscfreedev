@@ -61,7 +61,14 @@ impl PortForward {
         remote_host: String,
         remote_port: u16,
     ) -> anyhow::Result<Self> {
+        tracing::debug!("PortForward::new - Starting bind to port {}", local_port);
+        let bind_start = std::time::Instant::now();
         let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], local_port))).await?;
+        let bind_duration = bind_start.elapsed();
+        tracing::debug!(
+            "PortForward::new - TcpListener::bind completed in {:?}",
+            bind_duration
+        );
 
         Ok(Self {
             local_port,

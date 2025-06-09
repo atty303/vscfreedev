@@ -9,16 +9,34 @@ use yuha_core::port_forward::PortForwardMessage;
 
 #[tokio::test]
 async fn test_direct_port_forward_request() -> Result<()> {
+    let test_start = std::time::Instant::now();
+    println!("Test started at: {:?}", test_start);
+
     // Start the Docker container with the SSH server
     let container = RemoteContainer::new().await?;
+    let container_ready = std::time::Instant::now();
+    println!(
+        "Docker container ready in: {:?}",
+        container_ready.duration_since(test_start)
+    );
+
     let ssh_port = container.ssh_port().await?;
 
     // Connect to remote host
     println!("Connecting to 127.0.0.1:{} as root", ssh_port);
+    let ssh_connect_start = std::time::Instant::now();
     let mut message_channel =
         client::connect_ssh("127.0.0.1", ssh_port, "root", Some("password"), None).await?;
 
-    println!("Connected to remote host successfully");
+    let ssh_connected = std::time::Instant::now();
+    println!(
+        "SSH connection completed in: {:?}",
+        ssh_connected.duration_since(ssh_connect_start)
+    );
+    println!(
+        "Total time to SSH ready: {:?}",
+        ssh_connected.duration_since(test_start)
+    );
 
     // Use port 0 to let the system choose an available port
     let local_port = 0; // Let system choose
@@ -34,12 +52,23 @@ async fn test_direct_port_forward_request() -> Result<()> {
     let request_json = serde_json::to_string(&request)?;
     println!("Sending port forward request: {}", request_json);
 
+    let request_send_start = std::time::Instant::now();
     message_channel.send(Bytes::from(request_json)).await?;
     println!("Request sent successfully");
 
-    // Wait for response with extended timeout
+    // Wait for response with timeout
     let response_bytes =
-        tokio::time::timeout(Duration::from_secs(30), message_channel.receive()).await??;
+        tokio::time::timeout(Duration::from_secs(15), message_channel.receive()).await??;
+
+    let response_received = std::time::Instant::now();
+    println!(
+        "Port forward response received in: {:?}",
+        response_received.duration_since(request_send_start)
+    );
+    println!(
+        "Total test time: {:?}",
+        response_received.duration_since(test_start)
+    );
 
     let response_str = String::from_utf8_lossy(&response_bytes);
     println!("Received response: {}", response_str);

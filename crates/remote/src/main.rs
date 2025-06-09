@@ -169,9 +169,12 @@ async fn handle_messages<
     loop {
         tokio::select! {
             // Handle incoming messages from client
-            result = message_channel.receive() => {
+            result = tokio::time::timeout(
+                std::time::Duration::from_millis(200),
+                message_channel.receive(),
+            ) => {
                 match result {
-            Ok(message) => {
+            Ok(Ok(message)) => {
                 debug!("REMOTE_SERVER_LOG: Message received successfully");
                 let message_str = String::from_utf8_lossy(&message);
                 info!("Received message: {}", message_str);
@@ -234,9 +237,13 @@ async fn handle_messages<
                     }
                 }
             }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         error!("REMOTE_SERVER_ERROR: Error receiving message: {}", e);
                         break;
+                    }
+                    Err(_timeout) => {
+                        debug!("REMOTE_SERVER_LOG: Timeout waiting for message, continuing...");
+                        continue;
                     }
                 }
             }
