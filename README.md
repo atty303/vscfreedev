@@ -1,65 +1,108 @@
 # yuha
 ![yuha-removebg-preview](https://github.com/user-attachments/assets/eac30298-b8f3-4d6a-bf8c-a5a46e2ce5dd)
 
-## crates
+Rustで書かれたリモート開発ツール。SSH経由でリモートサーバーと通信し、ポートフォワーディング、クリップボード同期、ブラウザ操作などの機能を提供します。
 
-- core: クライアントとリモートで共有するライブラリ
-- client: クライアント側のライブラリ (SSHサポート含む)
-- remote: リモート側のライブラリとチャンネルリスナー実行ファイル
-- cli: クライアントのCLIアプリ
-- gui: クライアントのGUIアプリ
-- e2e: エンドツーエンドテスト (Dockerを使用)
+## クレート構成
 
-## SSH機能
+```
+yuha/
+├── crates/
+│   ├── cli/          # CLIインターフェース
+│   ├── client/       # クライアント側実装
+│   ├── core/         # 共通機能・プロトコル
+│   ├── gui/          # GUIインターフェース  
+│   └── remote/       # リモートサーバー実装
+```
 
-クライアントcrateはSSHを使用してリモートホストに接続し、coreのmessage channel接続を確立する機能を提供します。
+## 機能
 
-### 使用方法
+- **ポートフォワーディング**: リモートポートをローカルに転送
+- **クリップボード同期**: ローカル・リモート間でクリップボードを共有
+- **ブラウザ操作**: リモートからローカルブラウザを起動
+- **自動バイナリ転送**: リモートバイナリを自動的にアップロード・実行
 
-1. リモートホストにSSH接続する:
+## 通信プロトコル
+
+シンプルなリクエスト・レスポンス + Long Polling方式を採用：
+
+- `YuhaRequest`: クライアントからのリクエスト
+- `YuhaResponse`: サーバーからのレスポンス
+- 双方向通信は`PollData`リクエストによるLong Pollingで実現
+
+## 使用方法
+
+### CLIでSSH接続
 
 ```bash
-cargo run --bin yuha -- ssh --host <ホスト名> --port <SSHポート> --username <ユーザー名> [--password <パスワード>] [--key-path <秘密鍵のパス>] [--message <送信メッセージ>]
+cargo run -p yuha-cli -- ssh --host <ホスト名> --port <SSHポート> --username <ユーザー名> [--password <パスワード>] [--key-path <秘密鍵のパス>]
 ```
 
 例:
 ```bash
-cargo run --bin yuha -- ssh --host example.com --port 22 --username user --password pass
+cargo run -p yuha-cli -- ssh --host example.com --port 22 --username user --key-path ~/.ssh/id_rsa
 ```
 
 ### 動作の仕組み
 
-1. クライアントはリモート実行ファイルをビルドします
-2. SSHを使用してリモートホストに接続します
-3. リモート実行ファイルをリモートホストに転送します
-4. リモートホストでリモート実行ファイルを実行します
-5. リモート実行ファイルはTCPポートをリッスンし、message channelを確立します
-6. クライアントはリモート実行ファイルに接続し、message channelを確立します
+1. クライアントがSSHでリモートホストに接続
+2. リモートバイナリを自動的にビルド・転送
+3. リモートでバイナリを実行（stdin/stdout経由で通信）
+4. メッセージチャネルを確立して各種機能を提供
 
-## E2Eテスト
-
-このプロジェクトにはDockerを使用したエンドツーエンドテストが含まれています。
-
-### 前提条件
-
-- Dockerがインストールされ、実行されていること
-- RustとCargoがインストールされていること
-
-### テストの実行
-
-E2Eテストを実行するには、プロジェクトのルートから次のコマンドを使用します：
+## ビルド・実行
 
 ```bash
-cargo test -p yuha_e2e
+# 全体ビルド
+cargo build
+
+# テスト実行
+cargo test
+
+# CLI実行
+cargo run -p yuha-cli
+
+# リモートサーバー実行（通常は自動起動されるため手動実行は不要）
+cargo run -p yuha-remote -- --stdio
 ```
 
-### テストの仕組み
+## テスト
 
-E2Eテストは以下のように動作します：
+### 単体テスト
+```bash
+cargo test
+```
 
-1. リモートサーバーバイナリをビルドします
-2. 以下を含むDockerコンテナを作成します：
-   - SSHサーバー
-   - ポート9999で実行されるリモートサーバー
-3. Dockerコンテナを指すSSH接続パラメータでCLIを実行します
-4. CLIが正常に接続してメッセージを交換できることを確認します
+### 統合テスト
+クライアントcrateに各種統合テストが含まれています：
+- 基本通信テスト
+- バイナリ転送テスト
+- ポートフォワードテスト
+- プロトコルテスト
+
+```bash
+cargo test -p yuha-client
+```
+
+## デバッグ
+
+ログレベルを設定してデバッグ情報を表示：
+
+```bash
+RUST_LOG=debug cargo run -p yuha-cli -- ssh --host example.com --username user
+```
+
+リモート側のログ確認：
+```bash
+tail -f /tmp/remote_startup.txt
+tail -f /tmp/remote_stderr.log
+```
+
+## 依存関係
+
+- `tokio`: 非同期ランタイム
+- `russh`: SSH実装
+- `serde`: シリアライゼーション
+- `bytes`: バイト操作
+- `tracing`: ログ出力
+- `clap`: CLI引数解析
