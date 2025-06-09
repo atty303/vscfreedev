@@ -26,7 +26,7 @@ async fn test_basic_ssh_communication() -> Result<()> {
     message_channel.send(test_message.clone()).await?;
     println!("Message sent successfully");
 
-    // Wait for response with timeout
+    // Wait for response with extended timeout
     let response =
         tokio::time::timeout(Duration::from_secs(5), message_channel.receive()).await??;
 

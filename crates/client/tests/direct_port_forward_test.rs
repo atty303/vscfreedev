@@ -20,8 +20,9 @@ async fn test_direct_port_forward_request() -> Result<()> {
 
     println!("Connected to remote host successfully");
 
-    let local_port = shared::get_random_port();
-    let remote_port = shared::get_random_port();
+    // Use port 0 to let the system choose an available port
+    let local_port = 0; // Let system choose
+    let remote_port = 8888; // Echo service port in the container
 
     // Create and send port forward request directly
     let request = PortForwardMessage::StartRequest {
@@ -38,7 +39,7 @@ async fn test_direct_port_forward_request() -> Result<()> {
 
     // Wait for response with extended timeout
     let response_bytes =
-        tokio::time::timeout(Duration::from_secs(60), message_channel.receive()).await??;
+        tokio::time::timeout(Duration::from_secs(30), message_channel.receive()).await??;
 
     let response_str = String::from_utf8_lossy(&response_bytes);
     println!("Received response: {}", response_str);

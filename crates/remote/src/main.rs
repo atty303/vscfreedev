@@ -3,11 +3,12 @@ use bytes::Bytes;
 use clap::Parser;
 use std::collections::HashMap;
 use std::io::Write;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf, Stdin, Stdout};
-use tokio::net::TcpStream;
+use tokio::net::TcpSocket;
 use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 use yuha_core::message_channel::MessageChannel;
@@ -168,12 +169,9 @@ async fn handle_messages<
     loop {
         tokio::select! {
             // Handle incoming messages from client
-            result = tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                message_channel.receive(),
-            ) => {
+            result = message_channel.receive() => {
                 match result {
-            Ok(Ok(message)) => {
+            Ok(message) => {
                 debug!("REMOTE_SERVER_LOG: Message received successfully");
                 let message_str = String::from_utf8_lossy(&message);
                 info!("Received message: {}", message_str);
@@ -236,13 +234,9 @@ async fn handle_messages<
                     }
                 }
             }
-                    Ok(Err(e)) => {
+                    Err(e) => {
                         error!("REMOTE_SERVER_ERROR: Error receiving message: {}", e);
                         break;
-                    }
-                    Err(_timeout) => {
-                        debug!("REMOTE_SERVER_LOG: Timeout waiting for message, continuing...");
-                        continue;
                     }
                 }
             }
@@ -354,8 +348,19 @@ async fn handle_port_forward_message(
                 let remote_host = port_forward.remote_host.clone();
                 let remote_port = port_forward.remote_port;
 
-                // Connect to the target server
-                match TcpStream::connect((remote_host.as_str(), remote_port)).await {
+                // Connect to the target server with proper socket configuration
+                let connection_result = async {
+                    let socket = TcpSocket::new_v4()?;
+                    // Configure socket options for faster connection handling
+                    socket.set_nodelay(true)?;
+                    let addr: SocketAddr = format!("{}:{}", remote_host, remote_port)
+                        .parse()
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+                    socket.connect(addr).await
+                }
+                .await;
+
+                match connection_result {
                     Ok(mut stream) => {
                         info!(
                             "Connected to {}:{} for connection {}",
