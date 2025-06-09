@@ -2,7 +2,6 @@ use anyhow::Result;
 use bytes::Bytes;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
@@ -33,9 +32,9 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> S
             .await
             .map_err(|e| ClientError::Channel(format!("Failed to send request: {}", e)))?;
 
-        let response = tokio::time::timeout(Duration::from_secs(30), channel.receive_response())
+        let response = channel
+            .receive_response()
             .await
-            .map_err(|_| ClientError::Channel("Request timeout after 30 seconds".to_string()))?
             .map_err(|e| ClientError::Channel(format!("Failed to receive response: {}", e)))?;
 
         Ok(response)
@@ -169,11 +168,10 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> S
                 }
                 Err(e) => {
                     warn!("Error polling data: {}", e);
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    // Continue immediately on error, server will handle timing
                 }
             }
-
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            // No sleep here - long polling is handled by server
         }
     }
 }
