@@ -1,4 +1,4 @@
-//! Client-side library for vscfreedev
+//! Client-side library for yuha
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -13,14 +13,14 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tracing::{debug, error, info, warn};
-use vscfreedev_core::message_channel::MessageChannel;
-use vscfreedev_core::port_forward::{PortForwardManager, PortForwardMessage};
+use yuha_core::message_channel::MessageChannel;
+use yuha_core::port_forward::{PortForwardManager, PortForwardMessage};
 
 /// Type alias for active connections map  
 type ActiveConnections = Arc<RwLock<HashMap<u16, HashMap<u32, mpsc::UnboundedSender<Bytes>>>>>;
 
 /// Path to the remote binary built by build.rs
-pub const REMOTE_BINARY_PATH: &str = env!("VSCFREEDEV_REMOTE_BINARY_PATH");
+pub const REMOTE_BINARY_PATH: &str = env!("YUHA_REMOTE_BINARY_PATH");
 
 /// Error types for the client
 #[derive(thiserror::Error, Debug)]
@@ -203,7 +203,7 @@ impl AsyncWrite for SshChannelAdapter {
 }
 
 /// Client with port forwarding capabilities
-pub struct VscFreedevClient {
+pub struct YuhaClient {
     message_channel: Arc<Mutex<MessageChannel<SshChannelAdapter>>>,
     port_forward_manager: PortForwardManager,
     // Track active connections: local_port -> (connection_id -> sender)
@@ -215,7 +215,7 @@ pub struct VscFreedevClient {
     message_handler_started: Arc<RwLock<bool>>,
 }
 
-impl VscFreedevClient {
+impl YuhaClient {
     /// Create a new client with an existing message channel
     pub fn new(message_channel: MessageChannel<SshChannelAdapter>) -> Self {
         let (_control_response_tx, control_response_rx) = mpsc::unbounded_channel();
@@ -756,7 +756,7 @@ pub mod client {
         debug!("Created SSH channel: {:?}", channel_id);
 
         // Execute the remote command
-        let remote_path = "/usr/local/bin/vscfreedev-remote";
+        let remote_path = "/usr/local/bin/yuha-remote";
         let command = format!("{} -s 2>/tmp/remote_stderr.log", remote_path);
         debug!("Executing command: {}", command);
 
@@ -773,16 +773,16 @@ pub mod client {
         Ok(message_channel)
     }
 
-    /// Connect to a remote host via SSH and return a VscFreedevClient
+    /// Connect to a remote host via SSH and return a YuhaClient
     pub async fn connect_ssh_with_port_forward(
         host: &str,
         port: u16,
         username: &str,
         password: Option<&str>,
         key_path: Option<&Path>,
-    ) -> Result<VscFreedevClient, ClientError> {
+    ) -> Result<YuhaClient, ClientError> {
         let message_channel = connect_ssh(host, port, username, password, key_path).await?;
-        Ok(VscFreedevClient::new(message_channel))
+        Ok(YuhaClient::new(message_channel))
     }
 
     /// Get the path to the built remote binary

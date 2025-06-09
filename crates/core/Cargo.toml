@@ -1,11 +1,11 @@
 [package]
-name = "vscfreedev-core"
+name = "yuha-core"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 repository = { workspace = true }
 authors = { workspace = true }
-description = "Core functionality for vscfreedev"
+description = "Core functionality for yuha"
 
 [dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }

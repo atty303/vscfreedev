@@ -1,4 +1,4 @@
-//! Remote-side library for vscfreedev
+//! Remote-side library for yuha
 
 /// Remote implementation
 pub mod remote {

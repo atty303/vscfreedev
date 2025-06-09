@@ -4,7 +4,7 @@ use anyhow::Result;
 use shared::docker::RemoteContainer;
 use std::time::Duration;
 use tokio::time::sleep;
-use vscfreedev_client::client;
+use yuha_client::client;
 
 #[tokio::test]
 async fn test_port_forwarding_single() -> Result<()> {
@@ -23,7 +23,7 @@ async fn test_port_forwarding_single() -> Result<()> {
     println!("Connected to remote host");
 
     // Create client with port forwarding capabilities
-    let client = vscfreedev_client::VscFreedevClient::new(message_channel);
+    let client = yuha_client::YuhaClient::new(message_channel);
 
     // Test port forwarding setup
     let local_port = shared::get_random_port();
@@ -59,7 +59,7 @@ async fn test_port_forwarding_multiple() -> Result<()> {
     println!("Connected to remote host");
 
     // Create client with port forwarding capabilities
-    let client = vscfreedev_client::VscFreedevClient::new(message_channel);
+    let client = yuha_client::YuhaClient::new(message_channel);
 
     // Test multiple port forwarding
     let forwards = vec![
@@ -99,7 +99,7 @@ async fn test_port_forwarding_stop() -> Result<()> {
     println!("Connected to remote host");
 
     // Create client with port forwarding capabilities
-    let client = vscfreedev_client::VscFreedevClient::new(message_channel);
+    let client = yuha_client::YuhaClient::new(message_channel);
 
     let local_port = shared::get_random_port();
     let remote_port = shared::get_random_port();
@@ -139,7 +139,7 @@ async fn test_port_forwarding_data_transfer() -> Result<()> {
     println!("Connected to remote host");
 
     // Create client with port forwarding capabilities
-    let client = vscfreedev_client::VscFreedevClient::new(message_channel);
+    let client = yuha_client::YuhaClient::new(message_channel);
 
     let local_port = shared::get_random_port();
 

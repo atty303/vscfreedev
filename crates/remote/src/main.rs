@@ -10,8 +10,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf, Std
 use tokio::net::TcpStream;
 use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, error, info, warn};
-use vscfreedev_core::message_channel::MessageChannel;
-use vscfreedev_core::port_forward::{PortForwardManager, PortForwardMessage};
+use yuha_core::message_channel::MessageChannel;
+use yuha_core::port_forward::{PortForwardManager, PortForwardMessage};
 
 /// Type alias for active connections map
 type ActiveConnections = Arc<RwLock<HashMap<(u16, u32), mpsc::UnboundedSender<Bytes>>>>;
@@ -56,7 +56,7 @@ impl AsyncWrite for StdioStream {
     }
 }
 
-/// Remote server for vscfreedev
+/// Remote server for yuha
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -121,10 +121,10 @@ async fn main() -> Result<()> {
 
     // Log startup to stderr for better visibility in SSH logs
     if args.stdio {
-        info!("Starting vscfreedev remote server using standard I/O");
+        info!("Starting yuha remote server using standard I/O");
     } else {
         info!(
-            "Starting vscfreedev remote server using TCP on port {}",
+            "Starting yuha remote server using TCP on port {}",
             args.port
         );
     }

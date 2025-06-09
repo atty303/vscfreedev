@@ -1,5 +1,5 @@
 use anyhow::Result;
-use vscfreedev_core::port_forward::PortForwardMessage;
+use yuha_core::port_forward::PortForwardMessage;
 
 #[tokio::test]
 async fn test_port_forward_message_serialization() -> Result<()> {

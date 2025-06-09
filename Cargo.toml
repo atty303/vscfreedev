@@ -6,15 +6,15 @@ resolver = "2"
 version = "0.0.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/atty303/vscfreedev"
+repository = "https://github.com/atty303/yuha"
 authors = ["atty303"]
 description = "VSCode-like development environment with remote server support"
 
 [workspace.dependencies]
 # Internal crates
-vscfreedev-core = { path = "crates/core" }
-vscfreedev-remote = { path = "crates/remote" }
-vscfreedev-client = { path = "crates/client" }
+yuha-core = { path = "crates/core" }
+yuha-remote = { path = "crates/remote" }
+yuha-client = { path = "crates/client" }
 
 # External dependencies
 anyhow = "1"

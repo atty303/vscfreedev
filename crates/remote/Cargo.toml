@@ -1,18 +1,18 @@
 [package]
-name = "vscfreedev-remote"
+name = "yuha-remote"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 repository = { workspace = true }
 authors = { workspace = true }
-description = "Remote server component for vscfreedev"
+description = "Remote server component for yuha"
 
 [[bin]]
-name = "vscfreedev-remote"
+name = "yuha-remote"
 path = "src/main.rs"
 
 [dependencies]
-vscfreedev-core = { workspace = true }
+yuha-core = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs", "io-std"] }
 anyhow = { workspace = true }
 clap = { workspace = true }

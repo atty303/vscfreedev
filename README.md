@@ -1,4 +1,4 @@
-# vscfreedev
+# yuha
 
 ## crates
 
@@ -18,12 +18,12 @@
 1. リモートホストにSSH接続する:
 
 ```bash
-cargo run --bin vscfreedev -- ssh --host <ホスト名> --port <SSHポート> --username <ユーザー名> [--password <パスワード>] [--key-path <秘密鍵のパス>] [--message <送信メッセージ>]
+cargo run --bin yuha -- ssh --host <ホスト名> --port <SSHポート> --username <ユーザー名> [--password <パスワード>] [--key-path <秘密鍵のパス>] [--message <送信メッセージ>]
 ```
 
 例:
 ```bash
-cargo run --bin vscfreedev -- ssh --host example.com --port 22 --username user --password pass
+cargo run --bin yuha -- ssh --host example.com --port 22 --username user --password pass
 ```
 
 ### 動作の仕組み
@@ -49,7 +49,7 @@ cargo run --bin vscfreedev -- ssh --host example.com --port 22 --username user -
 E2Eテストを実行するには、プロジェクトのルートから次のコマンドを使用します：
 
 ```bash
-cargo test -p vscfreedev_e2e
+cargo test -p yuha_e2e
 ```
 
 ### テストの仕組み

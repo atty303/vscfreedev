@@ -3,7 +3,7 @@ use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use tracing::{debug, info};
-use vscfreedev_client::client;
+use yuha_client::client;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -37,7 +37,7 @@ enum Commands {
         key_path: Option<PathBuf>,
 
         /// Message to send to the remote host
-        #[arg(short, long, default_value = "Hello from vscfreedev!")]
+        #[arg(short, long, default_value = "Hello from yuha!")]
         message: String,
     },
 }

@@ -23,7 +23,7 @@ impl BuildConfig {
 
     fn determine_target() -> BuildResult<String> {
         // Check environment variable first
-        if let Ok(target) = env::var("VSCFREEDEV_REMOTE_TARGET") {
+        if let Ok(target) = env::var("YUHA_REMOTE_TARGET") {
             return Ok(target);
         }
 
@@ -73,13 +73,7 @@ fn build_remote_binary(config: &BuildConfig) -> BuildResult<()> {
     }
 
     // Configure build arguments
-    cmd.args([
-        "--release",
-        "-p",
-        "vscfreedev-remote",
-        "--target",
-        &config.target,
-    ]);
+    cmd.args(["--release", "-p", "yuha-remote", "--target", &config.target]);
 
     let output = cmd
         .output()
@@ -101,10 +95,10 @@ fn set_binary_path(target: &str) -> BuildResult<()> {
         .join("target")
         .join(target)
         .join("release")
-        .join("vscfreedev-remote");
+        .join("yuha-remote");
 
     println!(
-        "cargo:rustc-env=VSCFREEDEV_REMOTE_BINARY_PATH={}",
+        "cargo:rustc-env=YUHA_REMOTE_BINARY_PATH={}",
         remote_binary_path.display()
     );
 
@@ -115,7 +109,7 @@ fn main() {
     // Set up rebuild triggers
     println!("cargo:rerun-if-changed=../remote/src");
     println!("cargo:rerun-if-changed=../remote/Cargo.toml");
-    println!("cargo:rerun-if-env-changed=VSCFREEDEV_REMOTE_TARGET");
+    println!("cargo:rerun-if-env-changed=YUHA_REMOTE_TARGET");
 
     // Build process
     let config = BuildConfig::new()

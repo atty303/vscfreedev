@@ -4,7 +4,7 @@ use anyhow::Result;
 use shared::docker::RemoteContainer;
 use std::time::Duration;
 use tokio::time::sleep;
-use vscfreedev_client::client;
+use yuha_client::client;
 
 #[tokio::test]
 async fn test_port_forward_start_only() -> Result<()> {
@@ -23,7 +23,7 @@ async fn test_port_forward_start_only() -> Result<()> {
     println!("Connected to remote host successfully");
 
     // Create VscFreedevClient
-    let client = vscfreedev_client::VscFreedevClient::new(message_channel);
+    let client = yuha_client::YuhaClient::new(message_channel);
     println!("VscFreedevClient created successfully");
 
     let local_port = shared::get_random_port();

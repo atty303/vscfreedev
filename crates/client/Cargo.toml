@@ -1,14 +1,14 @@
 [package]
-name = "vscfreedev-client"
+name = "yuha-client"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 repository = { workspace = true }
 authors = { workspace = true }
-description = "Client library for connecting to remote vscfreedev servers"
+description = "Client library for connecting to remote yuha servers"
 
 [dependencies]
-vscfreedev-core = { workspace = true }
+yuha-core = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs", "process"] }
 anyhow = { workspace = true }
 thiserror = { workspace = true }

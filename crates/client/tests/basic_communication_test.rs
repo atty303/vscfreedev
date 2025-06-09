@@ -5,7 +5,7 @@ use bytes::Bytes;
 use shared::docker::RemoteContainer;
 use std::time::Duration;
 use tokio::time::sleep;
-use vscfreedev_client::client;
+use yuha_client::client;
 
 #[tokio::test]
 async fn test_basic_ssh_communication() -> Result<()> {

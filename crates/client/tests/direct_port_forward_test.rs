@@ -5,8 +5,8 @@ use bytes::Bytes;
 use shared::docker::RemoteContainer;
 use std::time::Duration;
 use tokio::time::sleep;
-use vscfreedev_client::client;
-use vscfreedev_core::port_forward::PortForwardMessage;
+use yuha_client::client;
+use yuha_core::port_forward::PortForwardMessage;
 
 #[tokio::test]
 async fn test_direct_port_forward_request() -> Result<()> {

@@ -22,13 +22,13 @@ RUN apt-get update && \
     sed -i 's/#LogLevel INFO/LogLevel DEBUG/' /etc/ssh/sshd_config
 
 # Copy the remote server binary
-COPY vscfreedev_remote /usr/local/bin/vscfreedev-remote
+COPY yuha_remote /usr/local/bin/yuha-remote
 
 # Expose SSH port and test service port
 EXPOSE 22 8888
 
 # Create a directory for logs
-RUN mkdir -p /var/log/vscfreedev
+RUN mkdir -p /var/log/yuha
 
 # Start SSH server and test echo service
 RUN echo '#!/bin/bash\n/usr/sbin/sshd -E /var/log/sshd.log\necho "SSH server started"\n# Start a simple echo service on port 8888\nsocat TCP-LISTEN:8888,fork,reuseaddr EXEC:/bin/cat &\necho "Echo service started on port 8888"\necho "Waiting for remote server files..."\nwhile true; do\n  if [ -f /tmp/remote_help.txt ]; then\n    echo "=== Remote Server Help File ==="\n    cat /tmp/remote_help.txt\n    echo "=============================="\n    break\n  fi\n  sleep 1\ndone\ntail -f /var/log/sshd.log /tmp/remote.log /tmp/remote_fallback.log /tmp/remote_panic.log /tmp/remote_stderr.log /tmp/remote_panic.txt /tmp/remote_startup.txt /tmp/remote_help.txt 2>/dev/null || true\nwhile true; do sleep 1; done' > /start.sh && \
@@ -47,7 +47,7 @@ impl RemoteContainer {
         // Generate a random container name
         let mut rng = rand::rng();
         let random_suffix: u32 = rng.random_range(10000..99999);
-        let container_name = format!("vscfreedev-remote-test-{}", random_suffix);
+        let container_name = format!("yuha-remote-test-{}", random_suffix);
 
         // Create a temporary directory for the Docker build context
         let temp_dir = tempfile::tempdir().context("Failed to create temporary directory")?;
@@ -56,14 +56,14 @@ impl RemoteContainer {
 
         // Copy the remote server binary to the build context
         // Use the path from the build script
-        let remote_binary_path = vscfreedev_client::REMOTE_BINARY_PATH;
-        let dest_path = temp_dir.path().join("vscfreedev_remote");
+        let remote_binary_path = yuha_client::REMOTE_BINARY_PATH;
+        let dest_path = temp_dir.path().join("yuha_remote");
         fs::copy(remote_binary_path, &dest_path)
             .await
             .context("Failed to copy remote server binary. Make sure it's built.")?;
 
         // Build the Docker image
-        let image_name = format!("vscfreedev-remote-test-{}", random_suffix);
+        let image_name = format!("yuha-remote-test-{}", random_suffix);
         let build_status = Command::new("docker")
             .args([
                 "build",
