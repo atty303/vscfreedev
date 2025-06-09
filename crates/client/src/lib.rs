@@ -209,150 +209,16 @@ pub struct YuhaClient {
     // Track active connections: local_port -> (connection_id -> sender)
     active_connections: ActiveConnections,
     next_connection_id: Arc<RwLock<u32>>,
-    // Channel for control message responses
-    control_response_rx: Arc<Mutex<mpsc::UnboundedReceiver<PortForwardMessage>>>,
-    // Flag to track if message handler has been started
-    message_handler_started: Arc<RwLock<bool>>,
 }
 
 impl YuhaClient {
     /// Create a new client with an existing message channel
     pub fn new(message_channel: MessageChannel<SshChannelAdapter>) -> Self {
-        let (_control_response_tx, control_response_rx) = mpsc::unbounded_channel();
-
         Self {
             message_channel: Arc::new(Mutex::new(message_channel)),
             port_forward_manager: PortForwardManager::new(),
             active_connections: Arc::new(RwLock::new(HashMap::new())),
             next_connection_id: Arc::new(RwLock::new(1)),
-            control_response_rx: Arc::new(Mutex::new(control_response_rx)),
-            message_handler_started: Arc::new(RwLock::new(false)),
-        }
-    }
-
-    /// Start the port forward message handler (only when needed)
-    async fn ensure_message_handler_started(&self) {
-        let mut started = self.message_handler_started.write().await;
-        if *started {
-            debug!("Message handler already started, returning");
-            return;
-        }
-        debug!("Starting message handler for the first time");
-        *started = true;
-
-        let (control_response_tx, new_control_rx) = mpsc::unbounded_channel();
-
-        // Replace the control response receiver
-        {
-            let mut control_rx = self.control_response_rx.lock().await;
-            *control_rx = new_control_rx;
-        }
-
-        let message_channel_clone = self.message_channel.clone();
-        let active_connections_clone = self.active_connections.clone();
-
-        // Use a one-shot channel to ensure the background task is ready before proceeding
-        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-
-        debug!("Spawning background message handler task");
-        tokio::spawn(async move {
-            debug!("Background message handler task started, entering receive loop");
-
-            // Signal that the task is ready
-            let _ = ready_tx.send(());
-
-            loop {
-                debug!("Message handler waiting for next message from remote...");
-                let message_bytes = {
-                    let mut channel = message_channel_clone.lock().await;
-                    match channel.receive().await {
-                        Ok(bytes) => bytes,
-                        Err(e) => {
-                            error!("Failed to receive message from remote: {}", e);
-                            break;
-                        }
-                    }
-                };
-
-                let message_str = String::from_utf8_lossy(&message_bytes);
-                debug!("Message handler received message: {}", message_str);
-
-                // Try to parse as port forward message
-                if let Ok(port_forward_msg) =
-                    serde_json::from_str::<PortForwardMessage>(&message_str)
-                {
-                    debug!(
-                        "Successfully parsed as port forward message: {:?}",
-                        port_forward_msg
-                    );
-                    match port_forward_msg {
-                        PortForwardMessage::StartResponse { .. }
-                        | PortForwardMessage::StopResponse { .. } => {
-                            // Route control responses to the control channel
-                            debug!(
-                                "Routing control response to control channel: {:?}",
-                                port_forward_msg
-                            );
-                            if let Err(e) = control_response_tx.send(port_forward_msg) {
-                                error!("Failed to send control response: {}", e);
-                            } else {
-                                debug!("Control response sent successfully");
-                            }
-                        }
-                        PortForwardMessage::Data {
-                            local_port,
-                            connection_id,
-                            data,
-                        } => {
-                            debug!(
-                                "Received {} bytes for connection {} on port {}",
-                                data.len(),
-                                connection_id,
-                                local_port
-                            );
-
-                            let connections = active_connections_clone.read().await;
-                            if let Some(port_connections) = connections.get(&local_port) {
-                                if let Some(sender) = port_connections.get(&connection_id) {
-                                    if let Err(e) = sender.send(Bytes::from(data)) {
-                                        warn!(
-                                            "Failed to send data to connection {}: {}",
-                                            connection_id, e
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        PortForwardMessage::CloseConnection {
-                            local_port,
-                            connection_id,
-                        } => {
-                            debug!(
-                                "Remote closed connection {} for port {}",
-                                connection_id, local_port
-                            );
-
-                            let mut connections = active_connections_clone.write().await;
-                            if let Some(port_connections) = connections.get_mut(&local_port) {
-                                port_connections.remove(&connection_id);
-                            }
-                        }
-                        _ => {
-                            debug!("Received other message type: {:?}", port_forward_msg);
-                        }
-                    }
-                } else {
-                    debug!("Received non-port-forward message: {}", message_str);
-                }
-            }
-        });
-
-        // Wait for the background task to be ready before proceeding
-        debug!("Waiting for background message handler to be ready...");
-        if (ready_rx.await).is_err() {
-            error!("Background message handler failed to start");
-        } else {
-            debug!("Background message handler is ready");
         }
     }
 
@@ -585,8 +451,8 @@ impl YuhaClient {
 
     /// Stop port forwarding for a local port
     pub async fn stop_port_forward(&self, local_port: u16) -> Result<(), ClientError> {
-        // Ensure the message handler is started before sending requests
-        self.ensure_message_handler_started().await;
+        // Use direct request-response instead of background handler for consistency with start_port_forward
+        debug!("Stopping port forward using direct request-response approach");
 
         // Create the stop request
         let request = PortForwardMessage::StopRequest { local_port };
@@ -595,22 +461,47 @@ impl YuhaClient {
         let request_json = serde_json::to_string(&request)
             .map_err(|e| ClientError::Channel(format!("Failed to serialize request: {}", e)))?;
 
-        // Send the request
-        {
+        // Send the request and wait for response directly
+        let response_bytes = {
             let mut channel = self.message_channel.lock().await;
+            debug!("Sending stop port forward request: {}", request_json);
             channel
                 .send(Bytes::from(request_json))
                 .await
                 .map_err(|e| ClientError::Channel(format!("Failed to send request: {}", e)))?;
-        }
+            debug!("Stop port forward request sent successfully");
 
-        // Wait for response on the control channel
-        let response = {
-            let mut control_rx = self.control_response_rx.lock().await;
-            control_rx.recv().await.ok_or_else(|| {
-                ClientError::Channel("Control response channel closed".to_string())
-            })?
+            debug!("Waiting for direct response...");
+            loop {
+                match channel.receive().await {
+                    Ok(msg) => break msg,
+                    Err(e) => {
+                        // Check if this is a WouldBlock error and retry
+                        if let yuha_core::message_channel::ChannelError::Io(io_error) = &e {
+                            if io_error.kind() == std::io::ErrorKind::WouldBlock {
+                                debug!(
+                                    "Client: WouldBlock error in stop_port_forward, retrying..."
+                                );
+                                tokio::time::sleep(Duration::from_millis(50)).await;
+                                continue;
+                            }
+                        }
+                        return Err(ClientError::Channel(format!(
+                            "Failed to receive response: {}",
+                            e
+                        )));
+                    }
+                }
+            }
         };
+
+        // Parse the response
+        let response_str = String::from_utf8_lossy(&response_bytes);
+        debug!("Received response: {}", response_str);
+
+        let response: PortForwardMessage = serde_json::from_str(&response_str)
+            .map_err(|e| ClientError::Channel(format!("Failed to parse response: {}", e)))?;
+        debug!("Parsed response: {:?}", response);
 
         match response {
             PortForwardMessage::StopResponse { success: true, .. } => {
