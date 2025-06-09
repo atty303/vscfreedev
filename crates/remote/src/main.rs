@@ -9,7 +9,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf, Stdin, Stdout};
 use tokio::sync::{RwLock, mpsc};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use yuha_core::message_channel::MessageChannel;
 use yuha_core::protocol::{ResponseBuffer, YuhaRequest, YuhaResponse};
@@ -80,7 +80,6 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
         loop {
             match self.message_channel.receive_request().await {
                 Ok(request) => {
-                    debug!("Received request: {:?}", request);
                     let response = self.handle_request(request).await;
 
                     if let Err(e) = self.message_channel.send_response(&response).await {
@@ -324,7 +323,6 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
                 result = client_stream.read(&mut client_buf) => {
                     match result {
                         Ok(0) => {
-                            debug!("Client closed connection {}", connection_id);
                             break;
                         }
                         Ok(n) => {
@@ -343,7 +341,6 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
                 result = target_stream.read(&mut target_buf) => {
                     match result {
                         Ok(0) => {
-                            debug!("Target closed connection {}", connection_id);
                             break;
                         }
                         Ok(n) => {
@@ -373,7 +370,6 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
                             }
                         }
                         None => {
-                            debug!("Data channel closed for connection {}", connection_id);
                             break;
                         }
                     }

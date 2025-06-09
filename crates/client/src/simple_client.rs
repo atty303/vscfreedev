@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use yuha_core::message_channel::MessageChannel;
 use yuha_core::protocol::{ResponseItem, YuhaRequest, YuhaResponse};
@@ -28,19 +28,16 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> S
     async fn send_request(&self, request: YuhaRequest) -> Result<YuhaResponse, ClientError> {
         let mut channel = self.message_channel.lock().await;
 
-        debug!("Sending request: {:?}", request);
         channel
             .send_request(&request)
             .await
             .map_err(|e| ClientError::Channel(format!("Failed to send request: {}", e)))?;
 
-        // Wait for response with timeout - give more time for server processing
-        let response = tokio::time::timeout(Duration::from_secs(60), channel.receive_response())
+        let response = tokio::time::timeout(Duration::from_secs(30), channel.receive_response())
             .await
-            .map_err(|_| ClientError::Channel("Request timeout after 60 seconds".to_string()))?
+            .map_err(|_| ClientError::Channel("Request timeout after 30 seconds".to_string()))?
             .map_err(|e| ClientError::Channel(format!("Failed to receive response: {}", e)))?;
 
-        debug!("Received response: {:?}", response);
         Ok(response)
     }
 
@@ -176,8 +173,7 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> S
                 }
             }
 
-            // Small delay to prevent busy polling
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 }

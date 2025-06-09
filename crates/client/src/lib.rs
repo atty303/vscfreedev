@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::{Mutex, mpsc};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 use yuha_core::message_channel::MessageChannel;
 
 pub mod simple_client;
@@ -79,11 +79,10 @@ impl Handler for MyHandler {
         _session: &mut Session,
     ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
         async move {
-            debug!("RusshHandler: Received {} bytes", data.len());
             let data_tx_guard = self.data_tx.lock().await;
             if let Some(ref tx) = *data_tx_guard {
                 if let Err(e) = tx.send(data.to_vec()) {
-                    error!("RusshHandler: Failed to send data: {}", e);
+                    tracing::error!("Failed to send data: {}", e);
                 }
             }
             Ok(())
@@ -126,17 +125,12 @@ impl AsyncRead for SshChannelAdapter {
             let to_copy = std::cmp::min(buf.remaining(), self.read_buf.len());
             let data = self.read_buf.drain(..to_copy).collect::<Vec<u8>>();
             buf.put_slice(&data);
-            debug!(
-                "SshChannelAdapter::poll_read returned {} bytes from buffer",
-                to_copy
-            );
             return Poll::Ready(Ok(()));
         }
 
         // Try to receive new data from channel
         match self.read_rx.try_recv() {
             Ok(data) => {
-                debug!("SshChannelAdapter::poll_read got {} bytes", data.len());
                 let to_copy = std::cmp::min(buf.remaining(), data.len());
                 buf.put_slice(&data[..to_copy]);
 
@@ -145,14 +139,10 @@ impl AsyncRead for SshChannelAdapter {
                     self.read_buf.extend_from_slice(&data[to_copy..]);
                 }
 
-                debug!("SshChannelAdapter::poll_read returned {} bytes", to_copy);
                 Poll::Ready(Ok(()))
             }
             Err(mpsc::error::TryRecvError::Empty) => Poll::Pending,
-            Err(mpsc::error::TryRecvError::Disconnected) => {
-                debug!("SshChannelAdapter::poll_read channel closed");
-                Poll::Ready(Ok(()))
-            }
+            Err(mpsc::error::TryRecvError::Disconnected) => Poll::Ready(Ok(())),
         }
     }
 }
@@ -163,23 +153,12 @@ impl AsyncWrite for SshChannelAdapter {
         cx: &mut TaskContext<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        debug!(
-            "SshChannelAdapter::poll_write called with {} bytes",
-            buf.len()
-        );
-
         // Create future to send data
         let send_fut = self.handle.data(self.channel_id, buf.to_vec().into());
         tokio::pin!(send_fut);
 
         match send_fut.poll(cx) {
-            Poll::Ready(Ok(_)) => {
-                debug!(
-                    "SshChannelAdapter::poll_write sent {} bytes successfully",
-                    buf.len()
-                );
-                Poll::Ready(Ok(buf.len()))
-            }
+            Poll::Ready(Ok(_)) => Poll::Ready(Ok(buf.len())),
             Poll::Ready(Err(e)) => {
                 error!("SshChannelAdapter::poll_write error: {:?}", e);
                 Poll::Ready(Err(std::io::Error::new(
@@ -193,7 +172,6 @@ impl AsyncWrite for SshChannelAdapter {
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
         // For SSH channels, data is sent immediately via the handle
-        debug!("SshChannelAdapter::poll_flush called");
         Poll::Ready(Ok(()))
     }
 
@@ -233,21 +211,6 @@ async fn transfer_binary_to_remote(
         remote_temp_path
     );
 
-    // Create a channel for verification first
-    let verify_channel = handle.channel_open_session().await.map_err(|e| {
-        ClientError::BinaryTransfer(format!("Failed to open verification channel: {}", e))
-    })?;
-
-    // Check if the target directory exists (redirect output to stderr)
-    verify_channel
-        .exec(false, b"ls -la /tmp/ >&2")
-        .await
-        .map_err(|e| {
-            ClientError::BinaryTransfer(format!("Failed to verify tmp directory: {}", e))
-        })?;
-
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
     // Create a channel for the transfer
     let channel = handle.channel_open_session().await.map_err(|e| {
         ClientError::BinaryTransfer(format!("Failed to open transfer channel: {}", e))
@@ -261,20 +224,9 @@ async fn transfer_binary_to_remote(
     const MAX_COMMAND_SIZE: usize = 128 * 1024; // 128KB command limit for safety
 
     if encoded_data.len() <= MAX_COMMAND_SIZE {
-        debug!(
-            "Transferring binary ({} bytes, {} encoded) in one command",
-            binary_data.len(),
-            encoded_data.len()
-        );
-
         let transfer_command = format!(
             "echo '{}' | base64 -d > {} && chmod +x {} && echo 'Transfer completed'",
             encoded_data, remote_temp_path, remote_temp_path
-        );
-
-        debug!(
-            "Executing transfer command (length: {})",
-            transfer_command.len()
         );
 
         // Execute the transfer command
@@ -286,7 +238,7 @@ async fn transfer_binary_to_remote(
             })?;
 
         // Give the command time to complete
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
     } else {
         // For larger files, use chunked transfer
         info!(
@@ -313,12 +265,10 @@ async fn transfer_binary_to_remote(
                 ClientError::BinaryTransfer(format!("Failed to start chunked transfer: {}", e))
             })?;
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Remaining chunks - append to the file
         for (i, chunk) in chunks[1..].iter().enumerate() {
-            debug!("Transferring chunk {} of {}", i + 2, chunks.len());
-
             let append_command = format!("echo -n '{}' | base64 -d >> {}", chunk, remote_temp_path);
 
             let append_channel = handle.channel_open_session().await.map_err(|e| {
@@ -340,7 +290,7 @@ async fn transfer_binary_to_remote(
                     ))
                 })?;
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
         }
 
         // Set executable permissions
@@ -356,40 +306,8 @@ async fn transfer_binary_to_remote(
                 ClientError::BinaryTransfer(format!("Failed to set executable permissions: {}", e))
             })?;
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
-
-    // Verify the transfer by checking if the file exists and is executable
-    let verify_channel2 = handle.channel_open_session().await.map_err(|e| {
-        ClientError::BinaryTransfer(format!("Failed to open second verification channel: {}", e))
-    })?;
-
-    // First verify the file exists and has correct permissions (redirect output to stderr)
-    let verify_command = format!(
-        "ls -la {} >&2 && file {} >&2",
-        remote_temp_path, remote_temp_path
-    );
-    verify_channel2
-        .exec(false, verify_command.as_bytes())
-        .await
-        .map_err(|e| {
-            ClientError::BinaryTransfer(format!("Failed to verify transferred binary: {}", e))
-        })?;
-
-    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-
-    // Test if the binary can show help (quick test)
-    let help_channel = handle.channel_open_session().await.map_err(|e| {
-        ClientError::BinaryTransfer(format!("Failed to open help test channel: {}", e))
-    })?;
-
-    let help_command = format!("{} --help >&2", remote_temp_path);
-    info!("Testing binary with --help command: {}", help_command);
-
-    help_channel
-        .exec(false, help_command.as_bytes())
-        .await
-        .map_err(|e| ClientError::BinaryTransfer(format!("Failed to test binary help: {}", e)))?;
 
     info!("Binary transferred successfully to {}", remote_temp_path);
 
@@ -430,7 +348,6 @@ pub mod client {
 
         // Authenticate
         if let Some(password) = password {
-            debug!("Authenticating with password");
             let auth_result = handle.authenticate_password(username, password).await?;
             if !matches!(auth_result, AuthResult::Success) {
                 return Err(ClientError::Connection(
@@ -438,7 +355,6 @@ pub mod client {
                 ));
             }
         } else if let Some(key_path) = key_path {
-            debug!("Authenticating with key: {:?}", key_path);
             let key_str = std::fs::read_to_string(key_path)?;
             let _key = russh_keys::decode_secret_key(&key_str, None)?;
             // Convert from russh_keys::PrivateKey to russh::keys::PrivateKey
@@ -473,7 +389,6 @@ pub mod client {
         // Create a channel
         let channel = handle.channel_open_session().await?;
         let channel_id = channel.id();
-        debug!("Created SSH channel: {:?}", channel_id);
 
         // Execute the remote command (now always uses simple protocol)
         let stderr_log = if auto_upload_binary {
@@ -490,48 +405,7 @@ pub mod client {
             Ok(_) => {
                 info!("Remote command executed successfully");
 
-                // Give the remote server a moment to start up
-                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-
-                // If auto-upload, verify the remote server is still running
-                if auto_upload_binary {
-                    let check_channel = handle.channel_open_session().await?;
-                    let check_command = format!(
-                        "ps aux | grep {} | grep -v grep >&2 || echo 'Process not found' >&2",
-                        remote_path
-                    );
-                    info!("Checking if remote server is running: {}", check_command);
-
-                    check_channel
-                        .exec(false, check_command.as_bytes())
-                        .await
-                        .map_err(|e| {
-                            ClientError::RemoteExecution(format!(
-                                "Failed to check remote server status: {}",
-                                e
-                            ))
-                        })?;
-
-                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-
-                    // Also check error logs (redirect to stderr)
-                    let log_channel = handle.channel_open_session().await?;
-                    let log_command = format!(
-                        "test -f {} && cat {} >&2 || echo 'No error log found' >&2",
-                        stderr_log, stderr_log
-                    );
-                    info!("Checking error logs: {}", log_command);
-
-                    log_channel
-                        .exec(false, log_command.as_bytes())
-                        .await
-                        .map_err(|e| {
-                            ClientError::RemoteExecution(format!(
-                                "Failed to check error logs: {}",
-                                e
-                            ))
-                        })?;
-                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
             }
             Err(e) => {
                 error!("Failed to execute remote command '{}': {}", command, e);
