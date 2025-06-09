@@ -6,7 +6,6 @@ use std::io::Write;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf, Stdin, Stdout};
 use tokio::sync::{RwLock, mpsc};
 use tracing::{error, info, warn};
@@ -136,7 +135,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
     /// Wait for data with timeout
     async fn wait_for_data(&self) {
         for _ in 0..100 {
-            tokio::time::sleep(Duration::from_millis(5)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
             let buffer = self.response_buffer.read().await;
             if buffer.has_data() {
                 break;
