@@ -36,6 +36,10 @@ enum Commands {
         #[arg(short, long)]
         key_path: Option<PathBuf>,
 
+        /// Automatically upload the remote binary (default: false, use pre-installed binary)
+        #[arg(long)]
+        auto_upload_binary: bool,
+
         /// Message to send to the remote host
         #[arg(short, long, default_value = "Hello from yuha!")]
         message: String,
@@ -55,17 +59,19 @@ async fn main() -> Result<()> {
             username,
             password,
             key_path,
+            auto_upload_binary,
             message,
         } => {
             info!("Connecting to {}:{} as {}", host, port, username);
 
             // Connect to the remote host via SSH
-            let mut channel = client::connect_ssh(
+            let mut channel = client::connect_ssh_with_options(
                 host,
                 *port,
                 username,
                 password.as_deref(),
                 key_path.as_deref(),
+                *auto_upload_binary,
             )
             .await?;
 

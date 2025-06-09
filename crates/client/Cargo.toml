@@ -19,8 +19,10 @@ tracing = { workspace = true }
 bytes = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = { workspace = true }
 rand = { workspace = true }
 bytes = { workspace = true }
+anyhow = { workspace = true }

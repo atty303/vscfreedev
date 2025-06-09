@@ -194,3 +194,24 @@ pub async fn connect_ssh(
         crate::client::connect_ssh(host, port, username, password, key_path).await?;
     Ok(SimpleYuhaClient::new(message_channel))
 }
+
+/// Connect to a remote host via SSH with auto-upload option and return a SimpleYuhaClient
+pub async fn connect_ssh_with_auto_upload(
+    host: &str,
+    port: u16,
+    username: &str,
+    password: Option<&str>,
+    key_path: Option<&Path>,
+    auto_upload_binary: bool,
+) -> Result<SimpleYuhaClient<SshChannelAdapter>, ClientError> {
+    let message_channel = crate::client::connect_ssh_with_options(
+        host,
+        port,
+        username,
+        password,
+        key_path,
+        auto_upload_binary,
+    )
+    .await?;
+    Ok(SimpleYuhaClient::new(message_channel))
+}

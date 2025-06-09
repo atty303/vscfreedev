@@ -37,6 +37,9 @@ pub enum ClientError {
 
     #[error("Key error: {0}")]
     Key(#[from] russh_keys::Error),
+
+    #[error("Binary transfer error: {0}")]
+    BinaryTransfer(String),
 }
 
 /// Handler for SSH client events
@@ -197,6 +200,184 @@ impl AsyncWrite for SshChannelAdapter {
     }
 }
 
+/// Transfer binary to remote host and return the path
+async fn transfer_binary_to_remote(
+    handle: &Handle<MyHandler>,
+    binary_path: &str,
+) -> Result<String, ClientError> {
+    info!("Starting binary transfer to remote host");
+
+    // Read the local binary
+    let binary_data = tokio::fs::read(binary_path).await.map_err(|e| {
+        ClientError::BinaryTransfer(format!(
+            "Failed to read local binary at {}: {}",
+            binary_path, e
+        ))
+    })?;
+
+    info!(
+        "Read {} bytes from local binary: {}",
+        binary_data.len(),
+        binary_path
+    );
+
+    // Generate a unique temporary path on the remote
+    let remote_temp_path = format!("/tmp/yuha-remote-{}", std::process::id());
+
+    // Use a simpler approach: write the binary directly using cat
+    info!(
+        "Transferring {} bytes to {}",
+        binary_data.len(),
+        remote_temp_path
+    );
+
+    // Create a channel for verification first
+    let verify_channel = handle.channel_open_session().await.map_err(|e| {
+        ClientError::BinaryTransfer(format!("Failed to open verification channel: {}", e))
+    })?;
+
+    // Check if the target directory exists
+    verify_channel
+        .exec(false, b"ls -la /tmp/")
+        .await
+        .map_err(|e| {
+            ClientError::BinaryTransfer(format!("Failed to verify tmp directory: {}", e))
+        })?;
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // Create a channel for the transfer
+    let channel = handle.channel_open_session().await.map_err(|e| {
+        ClientError::BinaryTransfer(format!("Failed to open transfer channel: {}", e))
+    })?;
+
+    // Encode binary as base64
+    use base64::Engine;
+    let encoded_data = base64::engine::general_purpose::STANDARD.encode(&binary_data);
+
+    // Check if we need to split the transfer
+    const MAX_COMMAND_SIZE: usize = 128 * 1024; // 128KB command limit for safety
+
+    if encoded_data.len() <= MAX_COMMAND_SIZE {
+        debug!(
+            "Transferring binary ({} bytes, {} encoded) in one command",
+            binary_data.len(),
+            encoded_data.len()
+        );
+
+        let transfer_command = format!(
+            "echo '{}' | base64 -d > {} && chmod +x {} && echo 'Transfer completed'",
+            encoded_data, remote_temp_path, remote_temp_path
+        );
+
+        debug!(
+            "Executing transfer command (length: {})",
+            transfer_command.len()
+        );
+
+        // Execute the transfer command
+        channel
+            .exec(false, transfer_command.as_bytes())
+            .await
+            .map_err(|e| {
+                ClientError::BinaryTransfer(format!("Failed to execute transfer command: {}", e))
+            })?;
+
+        // Give the command time to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    } else {
+        // For larger files, use chunked transfer
+        info!(
+            "Binary is large ({} bytes, {} encoded), using chunked transfer",
+            binary_data.len(),
+            encoded_data.len()
+        );
+
+        const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
+        let chunks: Vec<&str> = encoded_data
+            .as_bytes()
+            .chunks(CHUNK_SIZE)
+            .map(|chunk| std::str::from_utf8(chunk).unwrap())
+            .collect();
+
+        info!("Splitting into {} chunks", chunks.len());
+
+        // First chunk - create the file
+        let first_command = format!("echo -n '{}' | base64 -d > {}", chunks[0], remote_temp_path);
+        channel
+            .exec(false, first_command.as_bytes())
+            .await
+            .map_err(|e| {
+                ClientError::BinaryTransfer(format!("Failed to start chunked transfer: {}", e))
+            })?;
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        // Remaining chunks - append to the file
+        for (i, chunk) in chunks[1..].iter().enumerate() {
+            debug!("Transferring chunk {} of {}", i + 2, chunks.len());
+
+            let append_command = format!("echo -n '{}' | base64 -d >> {}", chunk, remote_temp_path);
+
+            let append_channel = handle.channel_open_session().await.map_err(|e| {
+                ClientError::BinaryTransfer(format!(
+                    "Failed to open channel for chunk {}: {}",
+                    i + 2,
+                    e
+                ))
+            })?;
+
+            append_channel
+                .exec(false, append_command.as_bytes())
+                .await
+                .map_err(|e| {
+                    ClientError::BinaryTransfer(format!(
+                        "Failed to transfer chunk {}: {}",
+                        i + 2,
+                        e
+                    ))
+                })?;
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
+        // Set executable permissions
+        let chmod_channel = handle.channel_open_session().await.map_err(|e| {
+            ClientError::BinaryTransfer(format!("Failed to open channel for chmod: {}", e))
+        })?;
+
+        let chmod_command = format!("chmod +x {}", remote_temp_path);
+        chmod_channel
+            .exec(false, chmod_command.as_bytes())
+            .await
+            .map_err(|e| {
+                ClientError::BinaryTransfer(format!("Failed to set executable permissions: {}", e))
+            })?;
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    }
+
+    // Verify the transfer by checking if the file exists and is executable
+    let verify_channel2 = handle.channel_open_session().await.map_err(|e| {
+        ClientError::BinaryTransfer(format!("Failed to open second verification channel: {}", e))
+    })?;
+
+    let verify_command = format!(
+        "ls -la {} && echo 'File exists' && {} --help && echo 'Binary is executable'",
+        remote_temp_path, remote_temp_path
+    );
+    verify_channel2
+        .exec(false, verify_command.as_bytes())
+        .await
+        .map_err(|e| {
+            ClientError::BinaryTransfer(format!("Failed to verify transferred binary: {}", e))
+        })?;
+
+    info!("Binary transferred successfully to {}", remote_temp_path);
+
+    Ok(remote_temp_path)
+}
+
 /// Public client interface
 pub mod client {
     use super::*;
@@ -208,6 +389,18 @@ pub mod client {
         username: &str,
         password: Option<&str>,
         key_path: Option<&Path>,
+    ) -> Result<MessageChannel<SshChannelAdapter>, ClientError> {
+        connect_ssh_with_options(host, port, username, password, key_path, false).await
+    }
+
+    /// Connect to a remote host via SSH with options and return a message channel
+    pub async fn connect_ssh_with_options(
+        host: &str,
+        port: u16,
+        username: &str,
+        password: Option<&str>,
+        key_path: Option<&Path>,
+        auto_upload_binary: bool,
     ) -> Result<MessageChannel<SshChannelAdapter>, ClientError> {
         info!("Connecting to {}:{} as {}", host, port, username);
 
@@ -250,19 +443,40 @@ pub mod client {
 
         info!("Authentication successful");
 
+        // Determine the remote binary path
+        let remote_path = if auto_upload_binary {
+            info!("Auto-uploading binary enabled, transferring binary to remote");
+            transfer_binary_to_remote(&handle, REMOTE_BINARY_PATH).await?
+        } else {
+            info!("Using pre-installed binary at /usr/local/bin/yuha-remote");
+            "/usr/local/bin/yuha-remote".to_string()
+        };
+
         // Create a channel
         let channel = handle.channel_open_session().await?;
         let channel_id = channel.id();
         debug!("Created SSH channel: {:?}", channel_id);
 
         // Execute the remote command (now always uses simple protocol)
-        let remote_path = "/usr/local/bin/yuha-remote";
-        let command = format!("{} -s 2>/tmp/remote_stderr.log", remote_path);
-        debug!("Executing command: {}", command);
+        let command = format!("{} --stdio 2>/tmp/remote_stderr.log", remote_path);
+        debug!("Executing remote command: {}", command);
 
         // Execute the command using channel exec
-        channel.exec(false, command.as_bytes()).await?;
-        debug!("Command executed successfully");
+        match channel.exec(false, command.as_bytes()).await {
+            Ok(_) => {
+                debug!("Remote command executed successfully");
+
+                // Give the remote server a moment to start up
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            }
+            Err(e) => {
+                error!("Failed to execute remote command '{}': {}", command, e);
+                return Err(ClientError::RemoteExecution(format!(
+                    "Failed to execute remote command '{}': {}",
+                    command, e
+                )));
+            }
+        }
 
         // Create the adapter
         let ssh_adapter = SshChannelAdapter::new(handle, channel_id, data_rx);
