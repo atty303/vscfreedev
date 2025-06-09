@@ -24,8 +24,8 @@ async fn test_direct_port_forward_request() -> Result<()> {
 
     println!("Connected to remote host successfully");
 
-    let local_port = 9999;
-    let remote_port = 8888;
+    let local_port = shared::get_random_port();
+    let remote_port = shared::get_random_port();
 
     // Create and send port forward request directly
     let request = PortForwardMessage::StartRequest {

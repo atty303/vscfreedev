@@ -26,8 +26,8 @@ async fn test_port_forwarding_single() -> Result<()> {
     let client = vscfreedev_client::VscFreedevClient::new(message_channel);
 
     // Test port forwarding setup
-    let local_port = 8080;
-    let remote_port = 80;
+    let local_port = shared::get_random_port();
+    let remote_port = shared::get_random_port();
 
     println!(
         "Starting port forward: {} -> localhost:{}",
@@ -62,7 +62,11 @@ async fn test_port_forwarding_multiple() -> Result<()> {
     let client = vscfreedev_client::VscFreedevClient::new(message_channel);
 
     // Test multiple port forwarding
-    let forwards = vec![(8080, 80), (8443, 443), (3000, 3000)];
+    let forwards = vec![
+        (shared::get_random_port(), shared::get_random_port()),
+        (shared::get_random_port(), shared::get_random_port()),
+        (shared::get_random_port(), shared::get_random_port()),
+    ];
 
     for (local_port, remote_port) in &forwards {
         println!(
@@ -97,8 +101,8 @@ async fn test_port_forwarding_stop() -> Result<()> {
     // Create client with port forwarding capabilities
     let client = vscfreedev_client::VscFreedevClient::new(message_channel);
 
-    let local_port = 8080;
-    let remote_port = 80;
+    let local_port = shared::get_random_port();
+    let remote_port = shared::get_random_port();
 
     // Start port forwarding
     println!(
@@ -137,7 +141,7 @@ async fn test_port_forwarding_data_transfer() -> Result<()> {
     // Create client with port forwarding capabilities
     let client = vscfreedev_client::VscFreedevClient::new(message_channel);
 
-    let local_port = 9090;
+    let local_port = shared::get_random_port();
 
     // Start port forwarding to the Docker container's echo service on port 8888
     println!("Starting port forward: {} -> localhost:8888", local_port);

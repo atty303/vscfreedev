@@ -26,8 +26,8 @@ async fn test_port_forward_start_only() -> Result<()> {
     let client = vscfreedev_client::VscFreedevClient::new(message_channel);
     println!("VscFreedevClient created successfully");
 
-    let local_port = 9999;
-    let remote_port = 8888;
+    let local_port = shared::get_random_port();
+    let remote_port = shared::get_random_port();
 
     // Try to start port forwarding with extended timeout
     println!(
