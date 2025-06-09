@@ -3,7 +3,6 @@ mod shared;
 use anyhow::Result;
 use shared::docker::RemoteContainer;
 use std::time::Duration;
-use tokio::time::sleep;
 use yuha_client::client;
 
 #[tokio::test]
@@ -11,9 +10,6 @@ async fn test_port_forwarding_single() -> Result<()> {
     // Start the Docker container with the SSH server
     let container = RemoteContainer::new().await?;
     let ssh_port = container.ssh_port().await?;
-
-    // Wait for SSH server to be ready
-    sleep(Duration::from_secs(10)).await;
 
     // Connect to remote host
     println!("Connecting to 127.0.0.1:{} as root", ssh_port);
@@ -47,9 +43,6 @@ async fn test_port_forwarding_multiple() -> Result<()> {
     // Start the Docker container with the SSH server
     let container = RemoteContainer::new().await?;
     let ssh_port = container.ssh_port().await?;
-
-    // Wait for SSH server to be ready
-    sleep(Duration::from_secs(10)).await;
 
     // Connect to remote host
     println!("Connecting to 127.0.0.1:{} as root", ssh_port);
@@ -88,9 +81,6 @@ async fn test_port_forwarding_stop() -> Result<()> {
     let container = RemoteContainer::new().await?;
     let ssh_port = container.ssh_port().await?;
 
-    // Wait for SSH server to be ready
-    sleep(Duration::from_secs(10)).await;
-
     // Connect to remote host
     println!("Connecting to 127.0.0.1:{} as root", ssh_port);
     let message_channel =
@@ -128,9 +118,6 @@ async fn test_port_forwarding_data_transfer() -> Result<()> {
     let ssh_port = container.ssh_port().await?;
     let _echo_service_port = container.echo_service_port().await?;
 
-    // Wait for SSH server and echo service to be ready
-    sleep(Duration::from_secs(10)).await;
-
     // Connect to remote host
     println!("Connecting to 127.0.0.1:{} as root", ssh_port);
     let message_channel =
@@ -148,7 +135,7 @@ async fn test_port_forwarding_data_transfer() -> Result<()> {
 
     // Add timeout to port forward start to avoid hanging
     match tokio::time::timeout(
-        Duration::from_secs(30),
+        Duration::from_secs(10),
         client.start_port_forward(local_port, "localhost", 8888),
     )
     .await
@@ -168,8 +155,8 @@ async fn test_port_forwarding_data_transfer() -> Result<()> {
 
     println!("Port forwarding established successfully");
 
-    // Give more time for the port forward to be fully established
-    sleep(Duration::from_secs(5)).await;
+    // Wait for the forwarded port to be ready
+    shared::wait_for_service("127.0.0.1", local_port, Duration::from_secs(5)).await?;
 
     // Test data transfer through the forwarded port
     println!("Testing port forward connection establishment");
@@ -187,7 +174,7 @@ async fn test_port_forwarding_data_transfer() -> Result<()> {
         );
 
         match tokio::time::timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(5),
             tokio::net::TcpStream::connect(format!("127.0.0.1:{}", local_port)),
         )
         .await
@@ -205,7 +192,7 @@ async fn test_port_forwarding_data_transfer() -> Result<()> {
                 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
                 // Send data with timeout
-                match tokio::time::timeout(Duration::from_secs(5), stream.write_all(test_data))
+                match tokio::time::timeout(Duration::from_secs(2), stream.write_all(test_data))
                     .await
                 {
                     Ok(Ok(())) => {
@@ -214,7 +201,7 @@ async fn test_port_forwarding_data_transfer() -> Result<()> {
                         // Try to read response with increased timeout
                         let mut response_buf = [0; 1024];
                         match tokio::time::timeout(
-                            Duration::from_secs(10),
+                            Duration::from_secs(3),
                             stream.read(&mut response_buf),
                         )
                         .await
@@ -276,8 +263,8 @@ async fn test_port_forwarding_data_transfer() -> Result<()> {
                 last_error = Some(anyhow::anyhow!("Port forwarding connection failed: {}", e));
 
                 if connection_attempts < max_attempts {
-                    println!("Waiting 2 seconds before retry...");
-                    sleep(Duration::from_secs(2)).await;
+                    println!("Waiting 500ms before retry...");
+                    tokio::time::sleep(Duration::from_millis(500)).await;
                 }
             }
             Err(_) => {
@@ -288,8 +275,8 @@ async fn test_port_forwarding_data_transfer() -> Result<()> {
                 last_error = Some(anyhow::anyhow!("Timeout connecting to forwarded port"));
 
                 if connection_attempts < max_attempts {
-                    println!("Waiting 2 seconds before retry...");
-                    sleep(Duration::from_secs(2)).await;
+                    println!("Waiting 500ms before retry...");
+                    tokio::time::sleep(Duration::from_millis(500)).await;
                 }
             }
         }

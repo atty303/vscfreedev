@@ -4,7 +4,6 @@ use anyhow::Result;
 use bytes::Bytes;
 use shared::docker::RemoteContainer;
 use std::time::Duration;
-use tokio::time::sleep;
 use yuha_client::client;
 
 #[tokio::test]
@@ -12,9 +11,6 @@ async fn test_ssh_connection() -> Result<()> {
     // Start the Docker container with the SSH server
     let container = RemoteContainer::new().await?;
     let ssh_port = container.ssh_port().await?;
-
-    // Wait a bit for the SSH server and remote executable to be fully ready
-    sleep(Duration::from_secs(10)).await;
 
     // Connect directly using client::connect_ssh
     println!("Connecting to 127.0.0.1:{} as root", ssh_port);
@@ -41,9 +37,6 @@ async fn test_ssh_connection() -> Result<()> {
 
         return Err(anyhow::anyhow!("MessageChannel failed: {}", e));
     }
-
-    // Add a small delay
-    sleep(Duration::from_secs(1)).await;
 
     let response =
         match tokio::time::timeout(Duration::from_secs(5), message_channel.receive()).await {

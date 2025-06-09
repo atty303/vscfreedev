@@ -4,7 +4,6 @@ use anyhow::Result;
 use bytes::Bytes;
 use shared::docker::RemoteContainer;
 use std::time::Duration;
-use tokio::time::sleep;
 use yuha_client::client;
 use yuha_core::port_forward::PortForwardMessage;
 
@@ -13,9 +12,6 @@ async fn test_direct_port_forward_request() -> Result<()> {
     // Start the Docker container with the SSH server
     let container = RemoteContainer::new().await?;
     let ssh_port = container.ssh_port().await?;
-
-    // Wait for SSH server to be ready
-    sleep(Duration::from_secs(10)).await;
 
     // Connect to remote host
     println!("Connecting to 127.0.0.1:{} as root", ssh_port);

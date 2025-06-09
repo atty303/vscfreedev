@@ -31,7 +31,7 @@ EXPOSE 22 8888
 RUN mkdir -p /var/log/yuha
 
 # Start SSH server and test echo service
-RUN echo '#!/bin/bash\n/usr/sbin/sshd -E /var/log/sshd.log\necho "SSH server started"\n# Start a simple echo service on port 8888\nsocat TCP-LISTEN:8888,fork,reuseaddr EXEC:/bin/cat &\necho "Echo service started on port 8888"\necho "Waiting for remote server files..."\nwhile true; do\n  if [ -f /tmp/remote_help.txt ]; then\n    echo "=== Remote Server Help File ==="\n    cat /tmp/remote_help.txt\n    echo "=============================="\n    break\n  fi\n  sleep 1\ndone\ntail -f /var/log/sshd.log /tmp/remote.log /tmp/remote_fallback.log /tmp/remote_panic.log /tmp/remote_stderr.log /tmp/remote_panic.txt /tmp/remote_startup.txt /tmp/remote_help.txt 2>/dev/null || true\nwhile true; do sleep 1; done' > /start.sh && \
+RUN echo '#!/bin/bash\n/usr/sbin/sshd -E /var/log/sshd.log\necho "SSH server started"\n# Start a simple echo service on port 8888\nsocat TCP-LISTEN:8888,fork,reuseaddr EXEC:/bin/cat &\necho "Echo service started on port 8888"\necho "Waiting for remote server files..."\nfor i in {1..10}; do\n  if [ -f /tmp/remote_help.txt ]; then\n    echo "=== Remote Server Help File ==="\n    cat /tmp/remote_help.txt\n    echo "=============================="\n    break\n  fi\n  sleep 0.1\ndone\ntail -f /var/log/sshd.log /tmp/remote.log /tmp/remote_fallback.log /tmp/remote_panic.log /tmp/remote_stderr.log /tmp/remote_panic.txt /tmp/remote_startup.txt /tmp/remote_help.txt 2>/dev/null || true' > /start.sh && \
     chmod +x /start.sh
 CMD ["/start.sh"]
 "#;
@@ -93,9 +93,9 @@ impl RemoteContainer {
         }
 
         // Wait for SSH server to start
-        sleep(Duration::from_secs(2)).await;
-
-        Ok(Self { container_name })
+        let container = Self { container_name };
+        container.wait_for_ssh().await?;
+        Ok(container)
     }
 
     /// Get the logs from the container
@@ -152,6 +152,39 @@ impl RemoteContainer {
             .context("Failed to parse port number")?;
 
         Ok(port)
+    }
+
+    /// Wait for SSH server to be ready by attempting connection
+    async fn wait_for_ssh(&self) -> Result<()> {
+        let ssh_port = self.ssh_port().await?;
+        let start_time = std::time::Instant::now();
+        let max_wait = Duration::from_secs(10);
+
+        loop {
+            // Try to connect to SSH port
+            match tokio::net::TcpStream::connect(format!("127.0.0.1:{}", ssh_port)).await {
+                Ok(_) => {
+                    // Connection successful, SSH is ready
+                    println!(
+                        "SSH server is ready on port {} (took {:.1}s)",
+                        ssh_port,
+                        start_time.elapsed().as_secs_f32()
+                    );
+                    return Ok(());
+                }
+                Err(_) => {
+                    // Check if we've exceeded max wait time
+                    if start_time.elapsed() > max_wait {
+                        anyhow::bail!(
+                            "SSH server failed to start within {} seconds",
+                            max_wait.as_secs()
+                        );
+                    }
+                    // Wait a short time before retrying
+                    sleep(Duration::from_millis(50)).await;
+                }
+            }
+        }
     }
 }
 
