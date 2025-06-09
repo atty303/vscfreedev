@@ -113,17 +113,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
 
     /// Receive a message from the channel
     pub async fn receive(&mut self) -> Result<Bytes> {
-        match tokio::time::timeout(std::time::Duration::from_secs(30), self.receive_binary()).await
-        {
-            Ok(result) => result,
-            Err(_timeout) => {
-                // Return WouldBlock error to allow the caller to retry
-                Err(ChannelError::Io(io::Error::new(
-                    io::ErrorKind::WouldBlock,
-                    "Read operation would block",
-                )))
-            }
-        }
+        // No timeout - block until data is available
+        self.receive_binary().await
     }
 
     async fn receive_binary(&mut self) -> Result<Bytes> {

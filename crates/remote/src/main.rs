@@ -88,12 +88,6 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
                     }
                 }
                 Err(e) => {
-                    // Check if this is a WouldBlock error (timeout)
-                    if let yuha_core::message_channel::ChannelError::Io(io_error) = &e {
-                        if io_error.kind() == std::io::ErrorKind::WouldBlock {
-                            continue;
-                        }
-                    }
                     error!("Error receiving request: {}", e);
                     break;
                 }

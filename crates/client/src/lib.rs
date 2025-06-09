@@ -117,7 +117,7 @@ impl SshChannelAdapter {
 impl AsyncRead for SshChannelAdapter {
     fn poll_read(
         mut self: Pin<&mut Self>,
-        _cx: &mut TaskContext<'_>,
+        cx: &mut TaskContext<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         // Try to read from our internal buffer first
@@ -128,9 +128,9 @@ impl AsyncRead for SshChannelAdapter {
             return Poll::Ready(Ok(()));
         }
 
-        // Try to receive new data from channel
-        match self.read_rx.try_recv() {
-            Ok(data) => {
+        // Try to receive new data from channel using proper async polling
+        match Pin::new(&mut self.read_rx).poll_recv(cx) {
+            Poll::Ready(Some(data)) => {
                 let to_copy = std::cmp::min(buf.remaining(), data.len());
                 buf.put_slice(&data[..to_copy]);
 
@@ -141,8 +141,8 @@ impl AsyncRead for SshChannelAdapter {
 
                 Poll::Ready(Ok(()))
             }
-            Err(mpsc::error::TryRecvError::Empty) => Poll::Pending,
-            Err(mpsc::error::TryRecvError::Disconnected) => Poll::Ready(Ok(())),
+            Poll::Ready(None) => Poll::Ready(Ok(())), // Channel closed
+            Poll::Pending => Poll::Pending,
         }
     }
 }
