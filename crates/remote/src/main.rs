@@ -132,15 +132,26 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
         }
     }
 
-    /// Wait for data with timeout
+    /// Wait for data with timeout for long polling
     async fn wait_for_data(&self) {
-        for _ in 0..100 {
-            tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
-            let buffer = self.response_buffer.read().await;
-            if buffer.has_data() {
-                break;
+        // Long polling: wait up to 5 seconds for data
+        // This balances low latency with reasonable timeout behavior
+        const LONG_POLL_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(5);
+        const POLL_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_millis(10);
+
+        let deadline = tokio::time::Instant::now() + LONG_POLL_TIMEOUT;
+
+        while tokio::time::Instant::now() < deadline {
+            {
+                let buffer = self.response_buffer.read().await;
+                if buffer.has_data() {
+                    return;
+                }
             }
+            // Sleep briefly to avoid excessive lock contention
+            tokio::time::sleep(POLL_INTERVAL).await;
         }
+        // Timeout is normal for long polling - client will retry
     }
 
     /// Start port forwarding
