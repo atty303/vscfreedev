@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use tracing::{debug, info};
 
 /// Transport types supported by Yuha
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum TransportType {
     /// SSH connection to remote host

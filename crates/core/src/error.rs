@@ -32,6 +32,10 @@ pub enum YuhaError {
     #[error("Configuration error: {message}")]
     Config { message: String },
 
+    /// Session management errors
+    #[error("Session error: {message}")]
+    Session { message: String },
+
     /// Generic internal errors
     #[error("Internal error: {message}")]
     Internal { message: String },
@@ -124,6 +128,13 @@ impl YuhaError {
         }
     }
 
+    /// Create a new session error
+    pub fn session<S: Into<String>>(message: S) -> Self {
+        Self::Session {
+            message: message.into(),
+        }
+    }
+
     /// Create a new internal error
     pub fn internal<S: Into<String>>(message: S) -> Self {
         Self::Internal {
@@ -151,6 +162,7 @@ impl YuhaError {
             YuhaError::Io(_) => "io",
             YuhaError::Protocol { .. } => "protocol",
             YuhaError::Config { .. } => "config",
+            YuhaError::Session { .. } => "session",
             YuhaError::Internal { .. } => "internal",
         }
     }
