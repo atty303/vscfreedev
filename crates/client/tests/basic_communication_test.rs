@@ -1,4 +1,5 @@
 mod shared;
+use shared::test_utils::*;
 
 use anyhow::Result;
 use shared::docker::RemoteContainer;
@@ -73,6 +74,7 @@ async fn test_basic_local_communication() -> Result<()> {
 
 #[tokio::test]
 async fn test_basic_ssh_communication_with_auto_upload() -> Result<()> {
+    docker_test!();
     let test_start = std::time::Instant::now();
     println!("Basic test with auto-upload started at: {:?}", test_start);
 

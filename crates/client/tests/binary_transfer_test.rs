@@ -1,4 +1,5 @@
 mod shared;
+use shared::test_utils::*;
 
 use anyhow::Result;
 use shared::docker::RemoteContainer;
@@ -44,6 +45,7 @@ async fn test_local_process_execution() -> Result<()> {
 
 #[tokio::test]
 async fn test_binary_transfer_and_execution() -> Result<()> {
+    docker_test!();
     println!("Testing binary transfer and execution");
 
     // Start the Docker container

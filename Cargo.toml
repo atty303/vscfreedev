@@ -31,3 +31,12 @@ thiserror = "2"
 tokio = { version = "1", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Test configuration
+[profile.test]
+opt-level = 0
+debug = true
+
+# Fast test profile - excludes slow tests
+[profile.fast-test]
+inherits = "test"

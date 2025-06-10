@@ -1,4 +1,5 @@
 mod shared;
+use shared::test_utils::*;
 
 use anyhow::Result;
 use shared::docker::RemoteContainer;
@@ -49,6 +50,7 @@ async fn test_port_forwarding_local_process() -> Result<()> {
 
 #[tokio::test]
 async fn test_port_forwarding_single_with_auto_upload() -> Result<()> {
+    docker_test!();
     // Start the Docker container with the SSH server
     let container = RemoteContainer::new().await?;
     let ssh_port = container.ssh_port().await?;
@@ -92,6 +94,7 @@ async fn test_port_forwarding_single_with_auto_upload() -> Result<()> {
 
 #[tokio::test]
 async fn test_port_forwarding_multiple_with_auto_upload() -> Result<()> {
+    docker_test!();
     // Start the Docker container with the SSH server
     let container = RemoteContainer::new().await?;
     let ssh_port = container.ssh_port().await?;
@@ -139,6 +142,7 @@ async fn test_port_forwarding_multiple_with_auto_upload() -> Result<()> {
 
 #[tokio::test]
 async fn test_port_forwarding_stop_with_auto_upload() -> Result<()> {
+    docker_test!();
     // Start the Docker container with the SSH server
     let container = RemoteContainer::new().await?;
     let ssh_port = container.ssh_port().await?;
@@ -186,6 +190,7 @@ async fn test_port_forwarding_stop_with_auto_upload() -> Result<()> {
 
 #[tokio::test]
 async fn test_port_forwarding_to_echo_service() -> Result<()> {
+    docker_test!();
     // Start the Docker container with the SSH server
     let container = RemoteContainer::new().await?;
     let ssh_port = container.ssh_port().await?;

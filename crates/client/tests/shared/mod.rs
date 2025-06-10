@@ -1,4 +1,5 @@
 pub(crate) mod docker;
+pub mod test_utils;
 
 use std::net::TcpListener;
 use std::time::Duration;
