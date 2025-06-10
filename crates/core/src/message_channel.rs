@@ -1,26 +1,10 @@
 use bytes::{Buf, Bytes, BytesMut};
-use std::io;
-use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tracing::{debug, warn};
 
+use crate::error::{ChannelError, Result};
 use crate::protocol::{YuhaRequest, YuhaResponse};
-
-/// Error types for the message channel
-#[derive(Error, Debug)]
-pub enum ChannelError {
-    #[error("I/O error: {0}")]
-    Io(#[from] io::Error),
-
-    #[error("Protocol error: {0}")]
-    Protocol(String),
-
-    #[error("Channel closed")]
-    Closed,
-}
-
-/// Result type for message channel operations
-pub type Result<T> = std::result::Result<T, ChannelError>;
 
 /// A simple message for direct client-remote communication
 #[derive(Debug, Clone)]
@@ -60,54 +44,100 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
 
     /// Send a request over the channel
     pub async fn send_request(&mut self, request: &YuhaRequest) -> Result<()> {
-        let json_data = serde_json::to_vec(request)
-            .map_err(|e| ChannelError::Protocol(format!("JSON serialization error: {}", e)))?;
+        debug!("Sending request: {:?}", request);
 
-        self.send(Bytes::from(json_data)).await
+        let json_data = serde_json::to_vec(request).map_err(|e| {
+            warn!("Failed to serialize request: {}", e);
+            ChannelError::serialization(format!("Request serialization failed: {}", e))
+        })?;
+
+        self.send(Bytes::from(json_data)).await?;
+        debug!("Request sent successfully");
+        Ok(())
     }
 
     /// Send a response over the channel
     pub async fn send_response(&mut self, response: &YuhaResponse) -> Result<()> {
-        let json_data = serde_json::to_vec(response)
-            .map_err(|e| ChannelError::Protocol(format!("JSON serialization error: {}", e)))?;
+        debug!("Sending response: {:?}", response);
 
-        self.send(Bytes::from(json_data)).await
+        let json_data = serde_json::to_vec(response).map_err(|e| {
+            warn!("Failed to serialize response: {}", e);
+            ChannelError::serialization(format!("Response serialization failed: {}", e))
+        })?;
+
+        self.send(Bytes::from(json_data)).await?;
+        debug!("Response sent successfully");
+        Ok(())
     }
 
     /// Receive a request from the channel
     pub async fn receive_request(&mut self) -> Result<YuhaRequest> {
+        debug!("Waiting for request...");
+
         let payload = self.receive().await?;
-        serde_json::from_slice(&payload)
-            .map_err(|e| ChannelError::Protocol(format!("JSON deserialization error: {}", e)))
+        debug!("Received request payload ({} bytes)", payload.len());
+
+        let result = serde_json::from_slice(&payload).map_err(|e| {
+            warn!("Failed to deserialize request: {}", e);
+            ChannelError::serialization(format!("Request deserialization failed: {}", e))
+        })?;
+
+        debug!("Successfully parsed request: {:?}", result);
+        Ok(result)
     }
 
     /// Receive a response from the channel
     pub async fn receive_response(&mut self) -> Result<YuhaResponse> {
+        debug!("Waiting for response...");
+
         let payload = self.receive().await?;
-        serde_json::from_slice(&payload)
-            .map_err(|e| ChannelError::Protocol(format!("JSON deserialization error: {}", e)))
+        debug!("Received response payload ({} bytes)", payload.len());
+
+        let result = serde_json::from_slice(&payload).map_err(|e| {
+            warn!("Failed to deserialize response: {}", e);
+            ChannelError::serialization(format!("Response deserialization failed: {}", e))
+        })?;
+
+        debug!("Successfully parsed response: {:?}", result);
+        Ok(result)
     }
 
     /// Send a raw message over the channel
     pub async fn send(&mut self, payload: Bytes) -> Result<()> {
         let payload_len = payload.len();
+        debug!("Sending message of {} bytes", payload_len);
 
         if payload_len > u16::MAX as usize {
-            return Err(ChannelError::Protocol(format!(
-                "Payload too large: {}",
-                payload_len
-            )));
+            warn!(
+                "Payload too large: {} bytes (max: {})",
+                payload_len,
+                u16::MAX
+            );
+            return Err(ChannelError::buffer_overflow(payload_len).into());
         }
 
         // Write payload length (2 bytes, big endian)
-        self.inner.write_u16(payload_len as u16).await?;
+        self.inner
+            .write_u16(payload_len as u16)
+            .await
+            .map_err(|e| {
+                warn!("Failed to write payload length: {}", e);
+                e
+            })?;
 
         // Write payload
-        self.inner.write_all(&payload).await?;
+        self.inner.write_all(&payload).await.map_err(|e| {
+            warn!("Failed to write payload: {}", e);
+            e
+        })?;
 
         // Explicitly flush the stream to ensure data is sent
-        self.inner.flush().await?;
+        self.inner.flush().await.map_err(|e| {
+            warn!("Failed to flush stream: {}", e);
+            e
+        })?;
 
+        debug!("Message sent successfully");
         Ok(())
     }
 
@@ -141,7 +171,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
             let bytes_read = self.inner.read_buf(&mut self.read_buffer).await?;
 
             if bytes_read == 0 {
-                return Err(ChannelError::Closed);
+                return Err(ChannelError::Closed.into());
             }
         }
     }
