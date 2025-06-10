@@ -14,6 +14,7 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tracing::{debug, info};
 
 /// Local transport that runs yuha-remote as a subprocess
+#[derive(Debug)]
 pub struct LocalTransport {
     config: LocalTransportConfig,
     transport_config: TransportConfig,

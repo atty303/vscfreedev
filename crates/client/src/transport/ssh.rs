@@ -155,6 +155,7 @@ impl AsyncWrite for SshChannelAdapter {
 }
 
 /// SSH transport implementation
+#[derive(Debug)]
 pub struct SshTransport {
     config: SshTransportConfig,
     transport_config: TransportConfig,

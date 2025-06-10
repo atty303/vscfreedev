@@ -10,9 +10,13 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 pub mod local;
 pub mod ssh;
+pub mod tcp;
+pub mod wsl;
 
 pub use local::LocalTransport;
 pub use ssh::SshTransport;
+pub use tcp::TcpTransport;
+pub use wsl::WslTransport;
 
 /// Configuration for transport connection
 #[derive(Debug, Clone, Default)]
