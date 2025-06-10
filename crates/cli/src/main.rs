@@ -1,9 +1,8 @@
 use anyhow::Result;
-use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use tracing::{debug, info};
-use yuha_client::client;
+use tracing::info;
+use yuha_client::simple_client;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -39,10 +38,12 @@ enum Commands {
         /// Automatically upload the remote binary (default: false, use pre-installed binary)
         #[arg(long)]
         auto_upload_binary: bool,
-
-        /// Message to send to the remote host
-        #[arg(short, long, default_value = "Hello from yuha!")]
-        message: String,
+    },
+    /// Connect to a local process
+    Local {
+        /// Path to the yuha-remote binary (optional, uses built-in path if not specified)
+        #[arg(short, long)]
+        binary_path: Option<PathBuf>,
     },
 }
 
@@ -60,32 +61,68 @@ async fn main() -> Result<()> {
             password,
             key_path,
             auto_upload_binary,
-            message,
         } => {
             info!("Connecting to {}:{} as {}", host, port, username);
 
-            // Connect to the remote host via SSH
-            let mut channel = client::connect_ssh_with_options(
-                host,
-                *port,
-                username,
-                password.as_deref(),
-                key_path.as_deref(),
-                *auto_upload_binary,
-            )
-            .await?;
+            // Connect to the remote host via SSH using new transport
+            let client = if *auto_upload_binary {
+                simple_client::connect_ssh_with_auto_upload(
+                    host,
+                    *port,
+                    username,
+                    password.as_deref(),
+                    key_path.as_deref(),
+                    *auto_upload_binary,
+                )
+                .await?
+            } else {
+                simple_client::connect_ssh(
+                    host,
+                    *port,
+                    username,
+                    password.as_deref(),
+                    key_path.as_deref(),
+                )
+                .await?
+            };
 
             info!("Connected to remote host");
 
-            // Send a message
-            debug!("Sending message: {}", message);
-            channel.send(Bytes::from(message.clone())).await?;
+            // Test clipboard functionality
+            let test_message = "Hello from yuha CLI!";
+            info!("Setting clipboard to: {}", test_message);
+            client.set_clipboard(test_message.to_string()).await?;
 
-            // Receive the response
-            let response = channel.receive().await?;
-            info!("Received: {}", String::from_utf8_lossy(&response));
+            // Get clipboard content
+            let clipboard_content = client.get_clipboard().await?;
+            info!("Retrieved clipboard content: {}", clipboard_content);
 
             info!("SSH connection test completed successfully");
+        }
+        Commands::Local { binary_path } => {
+            info!("Connecting to local process");
+
+            // Connect to local process
+            let client = simple_client::connect_local_process(binary_path.as_deref()).await?;
+
+            info!("Connected to local process");
+
+            // Test clipboard functionality
+            let test_message = "Hello from yuha CLI (local)!";
+            info!("Setting clipboard to: {}", test_message);
+            client.set_clipboard(test_message.to_string()).await?;
+
+            // Get clipboard content
+            let clipboard_content = client.get_clipboard().await?;
+            info!("Retrieved clipboard content: {}", clipboard_content);
+
+            // Test browser functionality
+            info!("Opening browser");
+            client
+                .open_browser("https://example.com".to_string())
+                .await?;
+
+            info!("Local connection test completed successfully");
         }
     }
 

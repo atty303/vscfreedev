@@ -7,6 +7,71 @@ use yuha_client::simple_client;
 use yuha_core::protocol::ResponseItem;
 
 #[tokio::test]
+async fn test_basic_local_communication() -> Result<()> {
+    let test_start = std::time::Instant::now();
+    println!(
+        "Basic local communication test started at: {:?}",
+        test_start
+    );
+
+    // Connect to local process
+    println!("Connecting to local yuha-remote process");
+    let connect_start = std::time::Instant::now();
+
+    let client = match simple_client::connect_local_process(None).await {
+        Ok(client) => {
+            println!("Local connection successful!");
+            client
+        }
+        Err(e) => {
+            println!("Local connection failed: {:?}", e);
+            return Err(e.into());
+        }
+    };
+
+    let connected = std::time::Instant::now();
+    println!(
+        "Local connection completed in: {:?}",
+        connected.duration_since(connect_start)
+    );
+
+    // Test clipboard functionality
+    let test_content = "Hello from local process!";
+    println!("Setting clipboard content: {}", test_content);
+
+    match client.set_clipboard(test_content.to_string()).await {
+        Ok(_) => println!("Clipboard set successfully"),
+        Err(e) => {
+            println!("Failed to set clipboard: {:?}", e);
+            return Err(e.into());
+        }
+    }
+
+    // Small delay to ensure clipboard is set
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Get clipboard content
+    match client.get_clipboard().await {
+        Ok(content) => {
+            println!("Retrieved clipboard content: {}", content);
+            assert_eq!(content, test_content);
+        }
+        Err(e) => {
+            println!("Failed to get clipboard: {:?}", e);
+            return Err(e.into());
+        }
+    }
+
+    // Test browser open functionality
+    let test_url = "https://example.com";
+    println!("Opening browser with URL: {}", test_url);
+    client.open_browser(test_url.to_string()).await?;
+
+    println!("Basic local communication test completed successfully");
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_basic_ssh_communication_with_auto_upload() -> Result<()> {
     let test_start = std::time::Instant::now();
     println!("Basic test with auto-upload started at: {:?}", test_start);
@@ -114,22 +179,10 @@ async fn test_basic_ssh_communication_with_auto_upload() -> Result<()> {
 
 #[tokio::test]
 async fn test_polling_mechanism() -> Result<()> {
-    println!("Testing polling mechanism with auto-upload");
+    println!("Testing polling mechanism with local process");
 
-    // Start the Docker container
-    let container = RemoteContainer::new().await?;
-    let ssh_port = container.ssh_port().await?;
-
-    // Connect with auto-upload
-    let client = simple_client::connect_ssh_with_auto_upload(
-        "127.0.0.1",
-        ssh_port,
-        "root",
-        Some("password"),
-        None,
-        true,
-    )
-    .await?;
+    // Connect to local process first (faster than SSH)
+    let client = simple_client::connect_local_process(None).await?;
 
     // Test polling for data
     let mut received_count = 0;

@@ -4,12 +4,155 @@
 //! and runs the yuha-remote process.
 
 use super::{SshTransportConfig, Transport, TransportConfig};
-use crate::{ClientError, MyHandler, REMOTE_BINARY_PATH, SshChannelAdapter};
+use crate::{ClientError, REMOTE_BINARY_PATH};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use russh::client::{AuthResult, Config, Handle, connect};
+use russh::ChannelId;
+use russh::client::{AuthResult, Config, Handle, Handler, Session, connect};
+use std::pin::Pin;
 use std::sync::Arc;
-use tracing::info;
+use std::task::{Context as TaskContext, Poll};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::sync::{Mutex, mpsc};
+use tracing::{error, info};
+
+/// Handler for SSH client events
+pub struct MyHandler {
+    data_tx: Arc<Mutex<Option<mpsc::UnboundedSender<Vec<u8>>>>>,
+}
+
+impl MyHandler {
+    pub fn new() -> (Self, mpsc::UnboundedReceiver<Vec<u8>>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (
+            Self {
+                data_tx: Arc::new(Mutex::new(Some(tx))),
+            },
+            rx,
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl Handler for MyHandler {
+    type Error = russh::Error;
+
+    #[allow(clippy::manual_async_fn)]
+    fn check_server_key(
+        &mut self,
+        _server_public_key: &russh::keys::PublicKey,
+    ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send {
+        async { Ok(true) }
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    fn data(
+        &mut self,
+        _channel: ChannelId,
+        data: &[u8],
+        _session: &mut Session,
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        async move {
+            let data_tx_guard = self.data_tx.lock().await;
+            if let Some(ref tx) = *data_tx_guard {
+                if let Err(e) = tx.send(data.to_vec()) {
+                    tracing::error!("Failed to send data: {}", e);
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// An adapter that implements AsyncRead and AsyncWrite for a russh channel
+pub struct SshChannelAdapter {
+    handle: Handle<MyHandler>,
+    channel_id: ChannelId,
+    read_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    read_buf: Vec<u8>,
+}
+
+impl SshChannelAdapter {
+    /// Create a new SSH channel adapter
+    pub fn new(
+        handle: Handle<MyHandler>,
+        channel_id: ChannelId,
+        read_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    ) -> Self {
+        Self {
+            handle,
+            channel_id,
+            read_rx,
+            read_buf: Vec::new(),
+        }
+    }
+}
+
+impl AsyncRead for SshChannelAdapter {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        // Try to read from our internal buffer first
+        if !self.read_buf.is_empty() {
+            let to_copy = std::cmp::min(buf.remaining(), self.read_buf.len());
+            let data = self.read_buf.drain(..to_copy).collect::<Vec<u8>>();
+            buf.put_slice(&data);
+            return Poll::Ready(Ok(()));
+        }
+
+        // Try to receive new data from channel using proper async polling
+        match Pin::new(&mut self.read_rx).poll_recv(cx) {
+            Poll::Ready(Some(data)) => {
+                let to_copy = std::cmp::min(buf.remaining(), data.len());
+                buf.put_slice(&data[..to_copy]);
+
+                // Store remainder in buffer if any
+                if to_copy < data.len() {
+                    self.read_buf.extend_from_slice(&data[to_copy..]);
+                }
+
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(None) => Poll::Ready(Ok(())), // Channel closed
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl AsyncWrite for SshChannelAdapter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        // Create future to send data
+        let send_fut = self.handle.data(self.channel_id, buf.to_vec().into());
+        tokio::pin!(send_fut);
+
+        match send_fut.poll(cx) {
+            Poll::Ready(Ok(_)) => Poll::Ready(Ok(buf.len())),
+            Poll::Ready(Err(e)) => {
+                error!("SshChannelAdapter::poll_write error: {:?}", e);
+                Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    format!("SSH data send failed: {:?}", e),
+                )))
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
+        // For SSH channels, data is sent immediately via the handle
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
 
 /// SSH transport implementation
 pub struct SshTransport {

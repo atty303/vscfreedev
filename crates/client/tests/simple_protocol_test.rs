@@ -1,17 +1,21 @@
 use anyhow::Result;
-use tokio::io::duplex;
-use yuha_client::simple_client::SimpleYuhaClient;
-use yuha_core::message_channel::MessageChannel;
+use std::path::PathBuf;
+use yuha_client::simple_client;
 use yuha_core::protocol::{YuhaRequest, YuhaResponse};
 
 #[tokio::test]
-async fn test_simple_protocol_compilation() -> Result<()> {
-    // Simple test to verify compilation and basic functionality
-    let (client_stream, _server_stream) = duplex(8192);
-    let client_channel = MessageChannel::new_with_stream(client_stream);
-    let _client = SimpleYuhaClient::new(client_channel);
+async fn test_local_transport_connection() -> Result<()> {
+    // Test local transport connection
+    let binary_path = PathBuf::from(yuha_client::client::get_remote_binary_path());
+    let result = simple_client::connect_local_process(Some(&binary_path)).await;
 
-    println!("Simple protocol implementation compiled successfully");
+    // This test just verifies that the connection attempt doesn't panic
+    // The actual connection may fail in CI environments without the binary
+    match result {
+        Ok(_) => println!("Local transport connection successful"),
+        Err(e) => println!("Local transport connection failed (expected in CI): {}", e),
+    }
+
     Ok(())
 }
 

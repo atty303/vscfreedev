@@ -3,7 +3,44 @@ mod shared;
 use anyhow::Result;
 use shared::docker::RemoteContainer;
 use std::time::Duration;
-use yuha_client::client;
+use yuha_client::simple_client;
+
+#[tokio::test]
+async fn test_local_process_execution() -> Result<()> {
+    println!("Testing local process execution");
+
+    // Test local process connection (no binary transfer needed)
+    println!("\n=== Testing local process connection ===");
+    match simple_client::connect_local_process(None).await {
+        Ok(client) => {
+            println!("Local connection succeeded!");
+
+            // Test clipboard functionality
+            let test_content = "Binary execution test - local";
+            println!("Testing clipboard with: {}", test_content);
+
+            client.set_clipboard(test_content.to_string()).await?;
+            let retrieved = client.get_clipboard().await?;
+
+            assert_eq!(retrieved, test_content);
+            println!("Clipboard test successful!");
+
+            // Test browser functionality
+            println!("Testing browser functionality");
+            client
+                .open_browser("https://example.com".to_string())
+                .await?;
+            println!("Browser test successful!");
+        }
+        Err(e) => {
+            println!("Local connection failed: {:?}", e);
+            return Err(e.into());
+        }
+    }
+
+    println!("\nLocal process execution test completed");
+    Ok(())
+}
 
 #[tokio::test]
 async fn test_binary_transfer_and_execution() -> Result<()> {
@@ -17,7 +54,7 @@ async fn test_binary_transfer_and_execution() -> Result<()> {
 
     // First, test without auto-upload to see container status
     println!("\n=== Testing connection without auto-upload ===");
-    match client::connect_ssh("127.0.0.1", ssh_port, "root", Some("password"), None).await {
+    match simple_client::connect_ssh("127.0.0.1", ssh_port, "root", Some("password"), None).await {
         Ok(_) => {
             println!("ERROR: Connection succeeded without binary - this should fail!");
             // Get container logs
@@ -34,7 +71,7 @@ async fn test_binary_transfer_and_execution() -> Result<()> {
 
     // Now test with auto-upload
     println!("\n=== Testing connection with auto-upload ===");
-    match client::connect_ssh_with_options(
+    match simple_client::connect_ssh_with_auto_upload(
         "127.0.0.1",
         ssh_port,
         "root",
@@ -44,33 +81,28 @@ async fn test_binary_transfer_and_execution() -> Result<()> {
     )
     .await
     {
-        Ok(mut channel) => {
+        Ok(client) => {
             println!("Connection succeeded with auto-upload!");
 
-            // Try a simple message exchange
-            let test_msg = bytes::Bytes::from("ping");
-            println!("Sending test message: {:?}", test_msg);
+            // Test clipboard functionality
+            let test_content = "Binary transfer test - SSH";
+            println!("Testing clipboard with: {}", test_content);
 
-            match channel.send(test_msg).await {
-                Ok(_) => println!("Message sent successfully"),
-                Err(e) => println!("Failed to send message: {:?}", e),
-            }
+            client.set_clipboard(test_content.to_string()).await?;
 
-            // Try to receive response with timeout
-            match tokio::time::timeout(Duration::from_secs(2), channel.receive()).await {
-                Ok(Ok(response)) => {
-                    println!(
-                        "Received response: {:?}",
-                        String::from_utf8_lossy(&response)
-                    );
-                }
-                Ok(Err(e)) => {
-                    println!("Failed to receive response: {:?}", e);
-                }
-                Err(_) => {
-                    println!("Timeout waiting for response");
-                }
-            }
+            // Small delay to ensure the operation completes
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            let retrieved = client.get_clipboard().await?;
+            assert_eq!(retrieved, test_content);
+            println!("Clipboard test successful!");
+
+            // Test browser functionality
+            println!("Testing browser functionality");
+            client
+                .open_browser("https://example.com".to_string())
+                .await?;
+            println!("Browser test successful!");
 
             // Get container logs
             if let Ok(logs) = container.get_logs().await {
