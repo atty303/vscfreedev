@@ -13,6 +13,8 @@ use tracing::{error, info};
 use yuha_core::message_channel::MessageChannel;
 
 pub mod simple_client;
+pub mod simple_client_transport;
+pub mod transport;
 
 /// Path to the remote binary built by build.rs
 pub const REMOTE_BINARY_PATH: &str = env!("YUHA_REMOTE_BINARY_PATH");
