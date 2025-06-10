@@ -17,18 +17,24 @@ yuha/
 
 ## 機能
 
-- **ポートフォワーディング**: リモートポートをローカルに転送
-- **クリップボード同期**: ローカル・リモート間でクリップボードを共有
-- **ブラウザ操作**: リモートからローカルブラウザを起動
-- **自動バイナリ転送**: リモートバイナリを自動的にアップロード・実行
-
-## 通信プロトコル
-
-シンプルなリクエスト・レスポンス + Long Polling方式を採用：
-
-- `YuhaRequest`: クライアントからのリクエスト
-- `YuhaResponse`: サーバーからのレスポンス
-- 双方向通信は`PollData`リクエストによるLong Pollingで実現
+- トランスポート: リモートとの通信経路
+  - [x] SSH: SSHでリモートサーバーを起動し標準入出力で通信する
+  - [ ] WSL: WSLインスタンス内にリモートサーバーを起動し標準入出力で通信する
+  - [ ] ローカル: ローカルでリモートサーバーを起動し標準入出力で通信する
+  - [ ] TCP: 起動済みのリモートサーバーとTCPで通信する
+- リモートサーバーの環境サポート
+  - [x] linux-x64
+  - [ ] linux-aarch64
+  - [ ] mac-aarch64
+  - [ ] windows-x64
+- [ ] 複数のリモートと接続できる
+- [ ] リモートポートフォワーディング: リモートポートをローカルに転送
+  - [ ] SSL終端: ローカルではHTTPSでLISTENしてSSLを終端し、リモートをNon-SSLポートに接続する
+  - [ ] ローカルHTTPSの自己署名証明書を自動で管理
+- [ ] クリップボード同期: ローカル・リモート間でクリップボードを共有
+  - [ ] ローカルのクリップボードをリモートでペーストできる: `remote$ yuha clipboard paste`
+  - [ ] リモートからローカルのクリップボードにコピーできる: `remote$ echo "Hello from remote" | yuha clipboard copy`
+- [ ] リモートからローカルブラウザを起動: `remote$ yuha open https://google.com`
 
 ## 使用方法
 
@@ -91,18 +97,3 @@ cargo test -p yuha-client
 ```bash
 RUST_LOG=debug cargo run -p yuha-cli -- ssh --host example.com --username user
 ```
-
-リモート側のログ確認：
-```bash
-tail -f /tmp/remote_startup.txt
-tail -f /tmp/remote_stderr.log
-```
-
-## 依存関係
-
-- `tokio`: 非同期ランタイム
-- `russh`: SSH実装
-- `serde`: シリアライゼーション
-- `bytes`: バイト操作
-- `tracing`: ログ出力
-- `clap`: CLI引数解析
