@@ -235,20 +235,23 @@ fn init_logging(config: &YuhaConfig, verbose: bool) -> Result<()> {
     let level = if verbose {
         "debug"
     } else {
-        &config.logging.level
+        &config.logging.level.to_string()
     };
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
-    match config.logging.format.as_str() {
-        "json" => {
+    match config.logging.format {
+        yuha_core::LogFormat::Json => {
             fmt().json().with_env_filter(env_filter).init();
         }
-        "compact" => {
+        yuha_core::LogFormat::Compact => {
             fmt().compact().with_env_filter(env_filter).init();
         }
-        _ => {
+        yuha_core::LogFormat::Pretty => {
             fmt().pretty().with_env_filter(env_filter).init();
+        }
+        yuha_core::LogFormat::Full => {
+            fmt().with_env_filter(env_filter).init();
         }
     }
 

@@ -1,6 +1,8 @@
 //! Configuration management for yuha
 
 use crate::error::{Result, YuhaError};
+use crate::logging::LoggingConfig;
+use crate::metrics::MetricsConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -18,6 +20,8 @@ pub struct YuhaConfig {
     pub network: NetworkConfig,
     /// Logging configuration
     pub logging: LoggingConfig,
+    /// Metrics configuration
+    pub metrics: MetricsConfig,
     /// Connection profiles
     #[serde(default)]
     pub profiles: HashMap<String, ConnectionProfile>,
@@ -117,22 +121,6 @@ pub struct TempFileConfig {
     pub stderr_file: PathBuf,
 }
 
-/// Logging configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LoggingConfig {
-    /// Default log level
-    #[serde(default = "default_log_level")]
-    pub level: String,
-    /// Log format (json, pretty, compact)
-    #[serde(default = "default_log_format")]
-    pub format: String,
-    /// Enable file logging
-    #[serde(default)]
-    pub file_logging: bool,
-    /// Log file path
-    pub log_file: Option<PathBuf>,
-}
-
 /// Connection profile for reusable connection settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionProfile {
@@ -230,12 +218,6 @@ fn default_panic_file() -> PathBuf {
 fn default_stderr_file() -> PathBuf {
     PathBuf::from("/tmp/yuha_stderr.log")
 }
-fn default_log_level() -> String {
-    "info".to_string()
-}
-fn default_log_format() -> String {
-    "pretty".to_string()
-}
 
 impl Default for ClientConfig {
     fn default() -> Self {
@@ -298,17 +280,6 @@ impl Default for TempFileConfig {
             startup_file: default_startup_file(),
             panic_file: default_panic_file(),
             stderr_file: default_stderr_file(),
-        }
-    }
-}
-
-impl Default for LoggingConfig {
-    fn default() -> Self {
-        Self {
-            level: default_log_level(),
-            format: default_log_format(),
-            file_logging: false,
-            log_file: None,
         }
     }
 }
@@ -426,7 +397,9 @@ impl YuhaConfig {
     pub fn merge_with_env(&mut self) {
         // Log level from RUST_LOG
         if let Ok(rust_log) = std::env::var("RUST_LOG") {
-            self.logging.level = rust_log;
+            if let Ok(level) = rust_log.parse() {
+                self.logging.level = level;
+            }
         }
 
         // Override specific settings from environment
@@ -476,16 +449,7 @@ impl YuhaConfig {
             return Err(YuhaError::config("Buffer size must be greater than 0"));
         }
 
-        // Validate log level
-        match self.logging.level.as_str() {
-            "trace" | "debug" | "info" | "warn" | "error" => {}
-            _ => {
-                return Err(YuhaError::config(format!(
-                    "Invalid log level: {}",
-                    self.logging.level
-                )));
-            }
-        }
+        // Validate log level (LogLevel enum is already validated by its type)
 
         debug!("Configuration validation completed successfully");
         Ok(())
