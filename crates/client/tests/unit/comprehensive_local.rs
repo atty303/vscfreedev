@@ -1,4 +1,29 @@
-//! Comprehensive functionality tests using local transport for fast execution
+//! # Comprehensive Local Transport Tests
+//!
+//! This test suite provides comprehensive validation of Yuha functionality using
+//! local transport for fast execution. These tests run without external dependencies
+//! and are suitable for continuous integration and rapid development feedback.
+//!
+//! ## Test Coverage
+//!
+//! - Basic connection establishment and protocol communication
+//! - Clipboard operations (get/set)
+//! - Browser operations (URL opening)
+//! - Port forwarding setup and data transfer
+//! - Connection lifecycle management
+//! - Error handling and recovery
+//!
+//! ## Performance Expectations
+//!
+//! - Individual tests: < 5 seconds
+//! - Full suite: < 30 seconds
+//! - No external network dependencies
+//!
+//! ## Test Strategy
+//!
+//! Uses a shared client instance with locking to prevent resource conflicts
+//! when multiple tests run concurrently. This approach ensures reliable
+//! test execution while maintaining test isolation.
 
 use serial_test::serial;
 use std::time::Duration;
@@ -16,6 +41,16 @@ async fn get_shared_client() -> anyhow::Result<SimpleYuhaClientTransport<LocalTr
     create_local_client().await
 }
 
+/// Tests basic connection establishment and protocol communication.
+///
+/// Verifies that the local transport can successfully:
+/// - Spawn the yuha-remote process
+/// - Establish protocol communication
+/// - Handle basic request-response cycles
+/// - Maintain connection stability
+///
+/// **Expected Duration**: < 3 seconds
+/// **Dependencies**: None (local process only)
 #[tokio::test]
 #[serial]
 async fn test_basic_connection_and_polling() {

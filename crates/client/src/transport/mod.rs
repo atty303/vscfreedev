@@ -1,7 +1,41 @@
-//! Transport abstraction for Yuha client
+//! # Client Transport Layer
 //!
-//! This module provides an abstraction layer for different transport mechanisms
-//! (SSH, Local process, WSL, etc.) used to communicate with the remote Yuha server.
+//! This module provides client-specific transport implementations for connecting
+//! to remote Yuha servers. It extends the core transport abstractions with
+//! concrete implementations for various connection methods.
+//!
+//! ## Available Transports
+//!
+//! - **SSH Transport** (`ssh`): Connect via SSH with automatic binary management
+//! - **Local Transport** (`local`): Spawn local yuha-remote process
+//! - **TCP Transport** (`tcp`): Direct TCP connection to daemon
+//! - **WSL Transport** (`wsl`): Windows Subsystem for Linux integration
+//! - **Unix Transport** (`unix`): Unix domain sockets (Unix only)
+//! - **Windows Transport** (`windows`): Named pipes (Windows only)
+//!
+//! ## Transport Selection
+//!
+//! Each transport is optimized for specific use cases:
+//!
+//! - Use **SSH** for remote servers with automatic setup
+//! - Use **Local** for development and testing
+//! - Use **TCP** for connecting to existing daemons
+//! - Use **WSL** for Windows-to-WSL communication
+//! - Use **Unix/Windows** for high-performance local IPC
+//!
+//! ## Configuration
+//!
+//! All transports support common configuration options through `TransportConfig`:
+//!
+//! ```rust,no_run
+//! use yuha_client::transport::TransportConfig;
+//!
+//! let config = TransportConfig {
+//!     auto_upload_binary: true,
+//!     working_dir: Some("/tmp".into()),
+//!     ..Default::default()
+//! };
+//! ```
 
 use anyhow::Result;
 use async_trait::async_trait;

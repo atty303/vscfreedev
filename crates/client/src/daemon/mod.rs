@@ -1,8 +1,52 @@
-//! Daemon functionality for managing remote connections
+//! # Daemon Management
 //!
-//! This module implements the daemon server that runs in the background
-//! and manages persistent connections to remote servers.
-//! It can be used by both CLI and GUI applications.
+//! This module implements the daemon server functionality that runs in the background
+//! to manage persistent connections to remote servers. The daemon provides a centralized
+//! service that can be shared between multiple client applications (CLI and GUI).
+//!
+//! ## Key Features
+//!
+//! - **Persistent Connections**: Maintains long-lived connections to remote servers
+//! - **Session Management**: Handles multiple concurrent client sessions
+//! - **Resource Sharing**: Allows multiple clients to share the same remote connections
+//! - **Background Operation**: Runs as a system service or user daemon
+//!
+//! ## Architecture
+//!
+//! ```text
+//! CLI Client  →│
+//!              │ IPC  │ Daemon  │ SSH/TCP  │ Remote
+//! GUI Client  →│     │ Server  │ →       │ Server
+//! ```
+//!
+//! ## Usage
+//!
+//! The daemon can be started in foreground or background mode:
+//!
+//! ```rust,no_run
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! use yuha_client::daemon::run_daemon;
+//!
+//! // Start daemon in foreground for development
+//! run_daemon(None, None, true, None, None, false).await?;
+//!
+//! // Start daemon in background for production
+//! run_daemon(
+//!     Some("config.toml".into()),
+//!     Some("/tmp/yuha.sock".to_string()),
+//!     false,
+//!     Some("/var/log/yuha.log".into()),
+//!     Some("/var/run/yuha.pid".into()),
+//!     false
+//! ).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Configuration
+//!
+//! The daemon supports configuration via TOML files and command-line arguments.
+//! See `DaemonConfig` for available options.
 
 pub mod handler;
 pub mod server;

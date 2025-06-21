@@ -11,6 +11,26 @@ use std::time::Duration;
 #[cfg(feature = "docker-tests")]
 use yuha_client::simple_client;
 
+/// Tests basic SSH communication with automatic binary upload.
+///
+/// This integration test verifies that the SSH transport can:
+/// - Establish a connection to a remote SSH server
+/// - Automatically detect that the yuha-remote binary is missing
+/// - Upload the binary to the remote server
+/// - Execute the binary and establish protocol communication
+/// - Perform basic request-response operations
+///
+/// **Expected Duration**: < 15 seconds
+/// **Dependencies**: Docker daemon must be running
+/// **Test Type**: Integration test with real SSH server
+///
+/// # Test Flow
+///
+/// 1. Start Docker container with SSH server
+/// 2. Connect via SSH transport with auto-upload enabled
+/// 3. Verify binary is uploaded and executed
+/// 4. Test basic protocol operations (clipboard, browser)
+/// 5. Verify connection cleanup
 #[cfg(feature = "docker-tests")]
 #[tokio::test]
 #[serial]

@@ -1,7 +1,54 @@
-//! Simplified and unified transport abstraction
+//! # Transport Layer
 //!
-//! This module provides a clean, simplified transport system that consolidates
-//! the various transport configurations and implementations.
+//! This module provides a unified abstraction for different connection types
+//! used to communicate with remote Yuha servers. It consolidates various transport
+//! configurations and implementations under a common interface.
+//!
+//! ## Supported Transport Types
+//!
+//! - **SSH Transport**: Connect to remote server via SSH with automatic binary upload
+//!   - Supports key-based and password authentication
+//!   - Automatic detection and upload of yuha-remote binary
+//!   - Configurable connection parameters (timeout, keepalive)
+//!
+//! - **Local Transport**: Spawn local process and communicate via stdin/stdout
+//!   - Useful for development and testing
+//!   - Direct process spawning with configurable arguments
+//!
+//! - **TCP Transport**: Direct TCP connection to running daemon
+//!   - Optional TLS encryption support
+//!   - Configurable connection timeouts
+//!
+//! - **WSL Transport**: Windows Subsystem for Linux integration
+//!   - Platform-specific transport for Windows users
+//!   - Seamless integration with WSL distributions
+//!
+//! ## Design Principles
+//!
+//! - **Unified Interface**: All transports implement the same `Transport` trait
+//! - **Configuration-Driven**: Behavior controlled through structured configuration
+//! - **Platform Awareness**: Automatic detection of platform capabilities
+//! - **Error Transparency**: Clear error reporting for connection issues
+//!
+//! ## Usage Example
+//!
+//! ```rust,no_run
+//! use yuha_core::transport::{TransportFactory, TransportConfig, TransportType};
+//!
+//! let config = TransportConfig {
+//!     transport_type: TransportType::Ssh,
+//!     ssh: Some(SshConfig {
+//!         host: "example.com".to_string(),
+//!         username: "user".to_string(),
+//!         key_path: Some("/path/to/key".into()),
+//!         ..Default::default()
+//!     }),
+//!     ..Default::default()
+//! };
+//!
+//! let transport = TransportFactory::create(config)?;
+//! let stream = transport.connect().await?;
+//! ```
 
 use crate::error::{Result, TransportError};
 use async_trait::async_trait;

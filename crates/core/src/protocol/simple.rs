@@ -1,4 +1,47 @@
-//! Simple protocol implementation for direct client-server communication
+//! # Simple Protocol Implementation
+//!
+//! This module defines the simple protocol used for direct client-server communication.
+//! It follows a straightforward request-response pattern with long polling support
+//! for pseudo-bidirectional communication.
+//!
+//! ## Request Types
+//!
+//! The protocol supports the following request types:
+//!
+//! - **PollData**: Long polling for receiving server-side data
+//! - **Port Forwarding**: Start/stop port forwarding and data transfer
+//! - **Clipboard Operations**: Get/set clipboard content
+//! - **Browser Operations**: Open URLs in the default browser
+//!
+//! ## Response Format
+//!
+//! All responses follow a consistent format:
+//!
+//! - **Success**: Operation completed successfully
+//! - **Error**: Operation failed with error message
+//! - **Data**: Contains multiple data items from polling
+//!
+//! ## Usage Example
+//!
+//! ```rust,no_run
+//! use yuha_core::protocol::simple::{SimpleRequest, SimpleResponse};
+//!
+//! // Create a clipboard request
+//! let request = SimpleRequest::GetClipboard;
+//!
+//! // Send via protocol implementation
+//! let response = protocol.send_request(request).await?;
+//!
+//! match response {
+//!     SimpleResponse::Data { items } => {
+//!         // Process clipboard data
+//!     }
+//!     SimpleResponse::Error { message } => {
+//!         // Handle error
+//!     }
+//!     _ => {}
+//! }
+//! ```
 
 use super::{Message, Request, Response};
 use bytes::Bytes;

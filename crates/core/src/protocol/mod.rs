@@ -1,7 +1,42 @@
-//! Unified protocol abstraction for yuha
+//! # Protocol Layer
 //!
-//! This module provides a common abstraction for all protocol communications
-//! in the yuha ecosystem, supporting both simple client-server and daemon protocols.
+//! This module provides a unified abstraction for all protocol communications
+//! in the Yuha ecosystem. It supports both simple client-server and daemon protocols
+//! while maintaining a consistent interface.
+//!
+//! ## Protocol Types
+//!
+//! - **Simple Protocol**: Direct request-response communication between client and remote server
+//! - **Daemon Protocol**: Communication with local daemon for managing multiple sessions
+//!
+//! ## Design Philosophy
+//!
+//! The protocol layer follows a simple request-response pattern with long polling
+//! for pseudo-bidirectional communication. This approach prioritizes:
+//!
+//! - **Simplicity**: Easy to understand and debug
+//! - **Reliability**: Predictable error handling and state management
+//! - **Testability**: Straightforward to unit test and mock
+//!
+//! ## Message Flow
+//!
+//! ```text
+//! Client → Server: Request (JSON over binary framing)
+//! Server → Client: Response (JSON over binary framing)
+//!
+//! For bidirectional data:
+//! Client → Server: PollData request (long polling)
+//! Server → Client: Response with buffered data items
+//! ```
+//!
+//! ## Usage Example
+//!
+//! ```rust,no_run
+//! use yuha_core::protocol::{Protocol, simple::SimpleRequest};
+//!
+//! // Send a request through any protocol implementation
+//! let response = protocol.send_request(SimpleRequest::GetClipboard).await?;
+//! ```
 
 use async_trait::async_trait;
 use bytes::Bytes;

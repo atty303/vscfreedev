@@ -1,9 +1,42 @@
-//! Transport type definitions and enums
+//! # Transport Type Definitions
+//!
+//! This module defines the core types and enums used throughout the transport layer.
+//! It provides standardized representations for different transport methods and
+//! their associated metadata.
+//!
+//! ## Transport Types
+//!
+//! The supported transport types are designed to cover common remote access scenarios:
+//!
+//! - **SSH**: Secure remote access with automatic binary deployment
+//! - **Local**: Development and testing with local process spawning
+//! - **TCP**: Direct network connections to running daemons
+//! - **WSL**: Windows-specific integration with Linux subsystem
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Transport types supported by yuha
+/// Enumeration of transport types supported by Yuha.
+///
+/// Each transport type represents a different method for establishing
+/// communication with a remote Yuha server or local process.
+///
+/// # Serialization
+///
+/// This enum serializes to lowercase strings for configuration files:
+/// - `TransportType::Ssh` → `"ssh"`
+/// - `TransportType::Local` → `"local"`
+/// - `TransportType::Tcp` → `"tcp"`
+/// - `TransportType::Wsl` → `"wsl"`
+///
+/// # Example
+///
+/// ```rust
+/// use yuha_core::transport::TransportType;
+///
+/// let transport_type = TransportType::Ssh;
+/// assert_eq!(transport_type.to_string(), "ssh");
+/// ```
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum TransportType {

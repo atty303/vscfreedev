@@ -1,4 +1,45 @@
-//! Simple client implementation with transport abstraction
+//! # Simple Client with Transport Abstraction
+//!
+//! This module provides a simplified client implementation that works with any
+//! transport type. It abstracts away the complexity of different connection methods
+//! while providing a clean, consistent API for client applications.
+//!
+//! ## Key Features
+//!
+//! - **Transport Agnostic**: Works with SSH, Local, TCP, and other transports
+//! - **Simple API**: Request-response pattern with async/await support
+//! - **Error Handling**: Comprehensive error reporting and recovery
+//! - **Connection Management**: Automatic connection handling and lifecycle
+//!
+//! ## Usage Example
+//!
+//! ```rust,no_run
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! use yuha_client::simple_client_transport::SimpleYuhaClientTransport;
+//! use yuha_client::transport::local::LocalTransport;
+//! use yuha_client::transport::{LocalTransportConfig, TransportConfig};
+//!
+//! // Create transport and client
+//! let local_config = LocalTransportConfig::default();
+//! let transport_config = TransportConfig::default();
+//! let transport = LocalTransport::new(local_config, transport_config);
+//! let mut client = SimpleYuhaClientTransport::new(transport);
+//!
+//! // Connect and use
+//! client.connect().await?;
+//! let clipboard = client.get_clipboard().await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Type Alias
+//!
+//! For convenience, `SimpleYuhaClient<T>` is provided as a type alias:
+//!
+//! ```rust,no_run
+//! # use yuha_client::simple_client_transport::SimpleYuhaClientTransport;
+//! type SimpleYuhaClient<T> = SimpleYuhaClientTransport<T>;
+//! ```
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -12,9 +53,36 @@ use yuha_core::protocol::simple::{ResponseItem, YuhaRequest, YuhaResponse};
 use crate::ClientError;
 use crate::transport::{Transport, TransportConfig};
 
-/// Simplified client using request-response protocol with transport abstraction
+/// Simplified client using request-response protocol with transport abstraction.
+///
+/// This client provides a high-level interface for communicating with remote Yuha servers
+/// through any transport implementation. It handles connection management, request serialization,
+/// and response deserialization automatically.
+///
+/// # Type Parameters
+///
+/// - `T`: Transport implementation that handles the underlying connection
+///
+/// # Example
+///
+/// ```rust,no_run
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// use yuha_client::simple_client_transport::SimpleYuhaClientTransport;
+/// use yuha_client::transport::local::LocalTransport;
+/// use yuha_client::transport::{LocalTransportConfig, TransportConfig};
+///
+/// let local_config = LocalTransportConfig::default();
+/// let transport_config = TransportConfig::default();
+/// let transport = LocalTransport::new(local_config, transport_config);
+/// let mut client = SimpleYuhaClientTransport::new(transport);
+/// client.connect().await?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct SimpleYuhaClientTransport<T: Transport> {
+    /// The underlying transport for communication
     transport: T,
+    /// Message channel for sending/receiving protocol messages
     message_channel: Option<Arc<Mutex<MessageChannel<T::Stream>>>>,
 }
 

@@ -1,3 +1,24 @@
+//! # Yuha Core Library
+//!
+//! This crate provides the core functionality shared between client and remote components
+//! of the Yuha remote development tool. It includes protocol definitions, transport
+//! abstractions, configuration management, and utility functions.
+//!
+//! ## Key Components
+//!
+//! - **Protocol**: Request/response protocol definitions for client-server communication
+//! - **Transport**: Abstraction layer for different connection types (SSH, TCP, local)
+//! - **Session Management**: Multi-connection session handling and lifecycle management
+//! - **Message Channel**: Binary message framing and JSON serialization
+//! - **Configuration**: Centralized configuration management
+//! - **Metrics & Logging**: Observability and debugging infrastructure
+//!
+//! ## Architecture
+//!
+//! The core library follows a simple request-response pattern with long polling
+//! for pseudo-bidirectional communication, prioritizing simplicity and reliability
+//! over complex bidirectional messaging.
+
 pub mod browser;
 pub mod clipboard;
 pub mod config;
