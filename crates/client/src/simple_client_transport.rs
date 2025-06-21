@@ -48,7 +48,7 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use yuha_core::message_channel::MessageChannel;
-use yuha_core::protocol::simple::{ResponseItem, YuhaRequest, YuhaResponse};
+use yuha_core::protocol::simple::{ResponseItem, SimpleRequest, SimpleResponse};
 
 use crate::ClientError;
 use crate::transport::{Transport, TransportConfig};
@@ -115,7 +115,7 @@ impl<T: Transport> SimpleYuhaClientTransport<T> {
     }
 
     /// Send a request and wait for response
-    async fn send_request(&self, request: YuhaRequest) -> Result<YuhaResponse, ClientError> {
+    async fn send_request(&self, request: SimpleRequest) -> Result<SimpleResponse, ClientError> {
         let channel = self
             .message_channel
             .as_ref()
@@ -143,35 +143,35 @@ impl<T: Transport> SimpleYuhaClientTransport<T> {
         remote_host: String,
         remote_port: u16,
     ) -> Result<(), ClientError> {
-        let request = YuhaRequest::StartPortForward {
+        let request = SimpleRequest::StartPortForward {
             local_port,
             remote_host: remote_host.clone(),
             remote_port,
         };
 
         match self.send_request(request).await? {
-            YuhaResponse::Success => {
+            SimpleResponse::Success => {
                 info!(
                     "Port forwarding started: {} -> {}:{}",
                     local_port, remote_host, remote_port
                 );
                 Ok(())
             }
-            YuhaResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
+            SimpleResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
             _ => Err(ClientError::Channel("Unexpected response type".to_string())),
         }
     }
 
     /// Stop port forwarding
     pub async fn stop_port_forward(&self, local_port: u16) -> Result<(), ClientError> {
-        let request = YuhaRequest::StopPortForward { local_port };
+        let request = SimpleRequest::StopPortForward { local_port };
 
         match self.send_request(request).await? {
-            YuhaResponse::Success => {
+            SimpleResponse::Success => {
                 info!("Port forwarding stopped for port {}", local_port);
                 Ok(())
             }
-            YuhaResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
+            SimpleResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
             _ => Err(ClientError::Channel("Unexpected response type".to_string())),
         }
     }
@@ -182,24 +182,24 @@ impl<T: Transport> SimpleYuhaClientTransport<T> {
         connection_id: u32,
         data: Bytes,
     ) -> Result<(), ClientError> {
-        let request = YuhaRequest::PortForwardData {
+        let request = SimpleRequest::PortForwardData {
             connection_id,
             data,
         };
 
         match self.send_request(request).await? {
-            YuhaResponse::Success => Ok(()),
-            YuhaResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
+            SimpleResponse::Success => Ok(()),
+            SimpleResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
             _ => Err(ClientError::Channel("Unexpected response type".to_string())),
         }
     }
 
     /// Get clipboard content
     pub async fn get_clipboard(&self) -> Result<String, ClientError> {
-        let request = YuhaRequest::GetClipboard;
+        let request = SimpleRequest::GetClipboard;
 
         match self.send_request(request).await? {
-            YuhaResponse::Data { items } => {
+            SimpleResponse::Data { items } => {
                 for item in items {
                     if let ResponseItem::ClipboardContent { content } = item {
                         return Ok(content);
@@ -209,40 +209,40 @@ impl<T: Transport> SimpleYuhaClientTransport<T> {
                     "No clipboard content in response".to_string(),
                 ))
             }
-            YuhaResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
+            SimpleResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
             _ => Err(ClientError::Channel("Unexpected response type".to_string())),
         }
     }
 
     /// Set clipboard content
     pub async fn set_clipboard(&self, content: String) -> Result<(), ClientError> {
-        let request = YuhaRequest::SetClipboard { content };
+        let request = SimpleRequest::SetClipboard { content };
 
         match self.send_request(request).await? {
-            YuhaResponse::Success => Ok(()),
-            YuhaResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
+            SimpleResponse::Success => Ok(()),
+            SimpleResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
             _ => Err(ClientError::Channel("Unexpected response type".to_string())),
         }
     }
 
     /// Open browser with URL
     pub async fn open_browser(&self, url: String) -> Result<(), ClientError> {
-        let request = YuhaRequest::OpenBrowser { url };
+        let request = SimpleRequest::OpenBrowser { url };
 
         match self.send_request(request).await? {
-            YuhaResponse::Success => Ok(()),
-            YuhaResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
+            SimpleResponse::Success => Ok(()),
+            SimpleResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
             _ => Err(ClientError::Channel("Unexpected response type".to_string())),
         }
     }
 
     /// Poll for data (used for simulating bidirectional communication)
     pub async fn poll_data(&self) -> Result<Vec<ResponseItem>, ClientError> {
-        let request = YuhaRequest::PollData;
+        let request = SimpleRequest::PollData;
 
         match self.send_request(request).await? {
-            YuhaResponse::Data { items } => Ok(items),
-            YuhaResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
+            SimpleResponse::Data { items } => Ok(items),
+            SimpleResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
             _ => Err(ClientError::Channel("Unexpected response type".to_string())),
         }
     }

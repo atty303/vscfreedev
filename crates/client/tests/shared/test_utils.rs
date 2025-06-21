@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use yuha_client::simple_client_transport::{SimpleYuhaClientTransport, connect_local};
 use yuha_client::transport::{LocalTransport, LocalTransportConfig, TransportConfig};
-use yuha_core::protocol::simple::YuhaResponse;
+use yuha_core::protocol::simple::SimpleResponse;
 
 /// Test categories for filtering
 #[derive(Debug, Clone, Copy)]
@@ -47,41 +47,41 @@ pub async fn create_local_transport_client()
 macro_rules! assert_response {
     (success, $response:expr) => {
         match $response {
-            YuhaResponse::Success => {}
-            YuhaResponse::Error { message } => panic!("Expected success, got error: {}", message),
-            YuhaResponse::Data { .. } => panic!("Expected success, got data response"),
+            SimpleResponse::Success => {}
+            SimpleResponse::Error { message } => panic!("Expected success, got error: {}", message),
+            SimpleResponse::Data { .. } => panic!("Expected success, got data response"),
         }
     };
     (data, $response:expr) => {
         match $response {
-            YuhaResponse::Data { items } => items,
-            YuhaResponse::Success => panic!("Expected data response, got success"),
-            YuhaResponse::Error { message } => {
+            SimpleResponse::Data { items } => items,
+            SimpleResponse::Success => panic!("Expected data response, got success"),
+            SimpleResponse::Error { message } => {
                 panic!("Expected data response, got error: {}", message)
             }
         }
     };
     (error, $response:expr) => {
         match $response {
-            YuhaResponse::Error { message } => message,
-            YuhaResponse::Success => panic!("Expected error, got success"),
-            YuhaResponse::Data { .. } => panic!("Expected error, got data response"),
+            SimpleResponse::Error { message } => message,
+            SimpleResponse::Success => panic!("Expected error, got success"),
+            SimpleResponse::Data { .. } => panic!("Expected error, got data response"),
         }
     };
 }
 
 /// Assert that a response is successful
-pub fn assert_success(response: &YuhaResponse) {
+pub fn assert_success(response: &SimpleResponse) {
     assert_response!(success, response);
 }
 
 /// Assert that a response contains data
-pub fn assert_data(response: &YuhaResponse) -> &[yuha_core::protocol::simple::ResponseItem] {
+pub fn assert_data(response: &SimpleResponse) -> &[yuha_core::protocol::simple::ResponseItem] {
     assert_response!(data, response)
 }
 
 /// Assert that a response is an error
-pub fn assert_error(response: &YuhaResponse) -> &str {
+pub fn assert_error(response: &SimpleResponse) -> &str {
     assert_response!(error, response)
 }
 

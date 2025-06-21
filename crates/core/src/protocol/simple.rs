@@ -161,7 +161,3 @@ impl Default for ResponseBuffer {
         Self::new()
     }
 }
-
-// Re-export original names for backward compatibility
-pub use SimpleRequest as YuhaRequest;
-pub use SimpleResponse as YuhaResponse;

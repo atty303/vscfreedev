@@ -118,10 +118,10 @@ pub enum ClientError {
     },
 }
 
-// Re-export for backward compatibility
+// Re-export commonly used transport types
 pub use transport::ssh::{MyHandler, SshChannelAdapter};
 
-/// Public client interface (legacy)
+/// Utility functions for client operations
 pub mod client {
     use super::*;
 
