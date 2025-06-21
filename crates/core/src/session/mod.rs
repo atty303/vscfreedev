@@ -101,18 +101,13 @@ impl std::fmt::Display for SessionStatus {
 }
 
 /// Priority level for sessions
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum SessionPriority {
     Low,
+    #[default]
     Normal,
     High,
     Critical,
-}
-
-impl Default for SessionPriority {
-    fn default() -> Self {
-        SessionPriority::Normal
-    }
 }
 
 /// Metadata about a session

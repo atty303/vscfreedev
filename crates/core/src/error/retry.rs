@@ -164,6 +164,7 @@ pub struct CircuitBreaker {
     state: CircuitState,
     failure_count: u32,
     failure_threshold: u32,
+    #[allow(dead_code)]
     success_threshold: u32,
     timeout: Duration,
     last_failure_time: Option<std::time::Instant>,

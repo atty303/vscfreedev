@@ -121,7 +121,9 @@ impl ErrorContextExt for YuhaError {
 
 /// Extension trait for adding context to Result types
 pub trait ResultContextExt<T> {
+    #[allow(clippy::result_large_err)]
     fn with_context(self, context: ErrorContext) -> Result<T, ContextualError>;
+    #[allow(clippy::result_large_err)]
     fn with_operation<S: Into<String>>(
         self,
         operation: S,

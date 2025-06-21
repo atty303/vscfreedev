@@ -375,14 +375,14 @@ impl YuhaError {
 
     /// Check if this error is retriable
     pub fn is_retriable(&self) -> bool {
-        match self {
-            YuhaError::Transport(TransportError::ConnectionFailed { .. }) => true,
-            YuhaError::Protocol(ProtocolError::Timeout { .. }) => true,
-            YuhaError::Protocol(ProtocolError::ChannelClosed) => true,
-            YuhaError::Io(_) => true,
-            YuhaError::Daemon(DaemonError::SocketError { .. }) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            YuhaError::Transport(TransportError::ConnectionFailed { .. })
+                | YuhaError::Protocol(ProtocolError::Timeout { .. })
+                | YuhaError::Protocol(ProtocolError::ChannelClosed)
+                | YuhaError::Io(_)
+                | YuhaError::Daemon(DaemonError::SocketError { .. })
+        )
     }
 
     /// Get the error category for logging/metrics

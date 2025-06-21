@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 use yuha_client::simple_client;
-use yuha_core::protocol::{YuhaRequest, YuhaResponse};
+use yuha_core::protocol::simple::{YuhaRequest, YuhaResponse};
 
 #[tokio::test]
 async fn test_local_transport_connection() -> Result<()> {

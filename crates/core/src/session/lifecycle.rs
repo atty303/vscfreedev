@@ -106,7 +106,9 @@ impl SessionLifecycle {
         let _now = std::time::SystemTime::now();
 
         // Check idle time
-        if matches!(session.status, SessionStatus::Idle) && session.idle_time() > self.config.max_idle_time {
+        if matches!(session.status, SessionStatus::Idle)
+            && session.idle_time() > self.config.max_idle_time
+        {
             debug!(
                 "Session {} expired due to idle time: {:?}",
                 session.id,

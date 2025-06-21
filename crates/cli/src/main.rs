@@ -398,7 +398,7 @@ async fn handle_ssh_via_daemon(
     username: &str,
     password: Option<&str>,
     key_path: Option<&std::path::Path>,
-    auto_upload_binary: bool,
+    _auto_upload_binary: bool,
 ) -> Result<()> {
     use yuha_client::daemon_client::DaemonClient;
 
@@ -414,15 +414,15 @@ async fn handle_ssh_via_daemon(
         .port(port)
         .username(username)
         .timeout(30);
-    
+
     if let Some(pwd) = password {
         builder = builder.password(pwd);
     }
-    
+
     if let Some(key) = key_path {
         builder = builder.key_file(key);
     }
-    
+
     let transport_config = builder.build()?;
 
     // Create or connect to session

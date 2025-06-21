@@ -2,7 +2,6 @@
 
 use crate::transport::*;
 use std::path::PathBuf;
-use tempfile::tempdir;
 
 #[test]
 fn test_transport_type_serialization() {
@@ -40,7 +39,7 @@ fn test_transport_config_defaults() {
 
 #[test]
 fn test_ssh_transport_config() {
-    let ssh_config = SshTransportConfig {
+    let ssh_config = SshConfig {
         host: "example.com".to_string(),
         port: 22,
         username: "user".to_string(),
@@ -59,7 +58,7 @@ fn test_ssh_transport_config() {
 
 #[test]
 fn test_local_transport_config() {
-    let local_config = LocalTransportConfig {
+    let local_config = LocalConfig {
         binary_path: PathBuf::from("/path/to/yuha-remote"),
         args: vec!["--stdio".to_string(), "--debug".to_string()],
         working_dir: Some(PathBuf::from("/tmp")),
@@ -75,24 +74,22 @@ fn test_local_transport_config() {
 
 #[test]
 fn test_tcp_transport_config() {
-    let tcp_config = TcpTransportConfig {
+    let tcp_config = TcpConfig {
         host: "localhost".to_string(),
         port: 9999,
         timeout: 30,
-        keepalive: true,
         tls: None,
     };
 
     assert_eq!(tcp_config.host, "localhost");
     assert_eq!(tcp_config.port, 9999);
     assert_eq!(tcp_config.timeout, 30);
-    assert!(tcp_config.keepalive);
     assert!(tcp_config.tls.is_none());
 }
 
 #[test]
 fn test_wsl_transport_config() {
-    let wsl_config = WslTransportConfig {
+    let wsl_config = WslConfig {
         distribution: Some("Ubuntu".to_string()),
         user: Some("user".to_string()),
         binary_path: Some(PathBuf::from("yuha-remote")),
@@ -106,46 +103,47 @@ fn test_wsl_transport_config() {
 }
 
 #[test]
-fn test_transport_factory_creation() {
-    use crate::config::YuhaConfig;
+fn test_transport_builder() {
+    // Test SSH transport builder
+    let ssh_config = TransportBuilder::ssh()
+        .host("example.com")
+        .port(22)
+        .username("user")
+        .password("pass")
+        .build()
+        .unwrap();
 
-    let config = YuhaConfig::default();
-    let factory = TransportFactory::new(config);
+    assert_eq!(ssh_config.transport_type, TransportType::Ssh);
+    assert!(ssh_config.ssh.is_some());
+    assert_eq!(ssh_config.ssh.as_ref().unwrap().host, "example.com");
 
-    // Test local config creation
-    let local_config = factory.create_local_config(None);
+    // Test local transport builder
+    let local_config = TransportBuilder::local()
+        .binary_path(PathBuf::from("yuha-remote"))
+        .args(vec!["--stdio".to_string()])
+        .build()
+        .unwrap();
+
     assert_eq!(local_config.transport_type, TransportType::Local);
     assert!(local_config.local.is_some());
 
-    // Test SSH config creation
-    let ssh_config = factory.create_ssh_config(
-        "example.com".to_string(),
-        22,
-        "user".to_string(),
-        None,
-        None,
-        false,
-    );
-    assert_eq!(ssh_config.transport_type, TransportType::Ssh);
-    assert!(ssh_config.ssh.is_some());
+    // Test TCP transport builder
+    let tcp_config = TransportBuilder::tcp()
+        .host("localhost")
+        .port(9999)
+        .build()
+        .unwrap();
 
-    // Test TCP config creation
-    let tcp_config = factory.create_tcp_config("localhost".to_string(), 9999, false);
     assert_eq!(tcp_config.transport_type, TransportType::Tcp);
     assert!(tcp_config.tcp.is_some());
 }
 
 #[test]
 fn test_transport_config_validation() {
-    use crate::config::YuhaConfig;
-
-    let config = YuhaConfig::default();
-    let factory = TransportFactory::new(config);
-
     // Test valid SSH config
     let mut ssh_config = TransportConfig {
         transport_type: TransportType::Ssh,
-        ssh: Some(SshTransportConfig {
+        ssh: Some(SshConfig {
             host: "example.com".to_string(),
             port: 22,
             username: "user".to_string(),
@@ -158,41 +156,40 @@ fn test_transport_config_validation() {
         local: None,
         tcp: None,
         wsl: None,
-        general: GeneralTransportConfig::default(),
+        general: GeneralConfig::default(),
     };
-    assert!(factory.validate_config(&ssh_config).is_ok());
+    assert!(ssh_config.validate().is_ok());
 
     // Test invalid SSH config (empty host)
     ssh_config.ssh.as_mut().unwrap().host = String::new();
-    assert!(factory.validate_config(&ssh_config).is_err());
+    assert!(ssh_config.validate().is_err());
 
     // Test valid TCP config
     let mut tcp_config = TransportConfig {
         transport_type: TransportType::Tcp,
         ssh: None,
         local: None,
-        tcp: Some(TcpTransportConfig {
+        tcp: Some(TcpConfig {
             host: "localhost".to_string(),
             port: 9999,
             timeout: 30,
-            keepalive: true,
             tls: None,
         }),
         wsl: None,
-        general: GeneralTransportConfig::default(),
+        general: GeneralConfig::default(),
     };
-    assert!(factory.validate_config(&tcp_config).is_ok());
+    assert!(tcp_config.validate().is_ok());
 
     // Test invalid TCP config (port 0)
     tcp_config.tcp.as_mut().unwrap().port = 0;
-    assert!(factory.validate_config(&tcp_config).is_err());
+    assert!(tcp_config.validate().is_err());
 }
 
 #[test]
 fn test_config_serialization() {
     let config = TransportConfig {
         transport_type: TransportType::Ssh,
-        ssh: Some(SshTransportConfig {
+        ssh: Some(SshConfig {
             host: "example.com".to_string(),
             port: 22,
             username: "user".to_string(),
@@ -205,7 +202,7 @@ fn test_config_serialization() {
         local: None,
         tcp: None,
         wsl: None,
-        general: GeneralTransportConfig::default(),
+        general: GeneralConfig::default(),
     };
 
     // Test TOML serialization

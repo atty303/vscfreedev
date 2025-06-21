@@ -244,7 +244,7 @@ impl ClientTransportFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yuha_core::transport::{GeneralTransportConfig, LocalTransportConfig};
+    use yuha_core::transport::{GeneralConfig, LocalConfig};
 
     #[test]
     fn test_supported_transports() {
@@ -276,14 +276,14 @@ mod tests {
         let config = CoreTransportConfig {
             transport_type: TransportType::Local,
             ssh: None,
-            local: Some(yuha_core::transport::LocalTransportConfig {
+            local: Some(yuha_core::transport::LocalConfig {
                 binary_path: std::path::PathBuf::from("test-binary"),
                 args: vec!["--test".to_string()],
                 working_dir: None,
             }),
             tcp: None,
             wsl: None,
-            general: GeneralTransportConfig::default(),
+            general: GeneralConfig::default(),
         };
 
         let result = ClientTransportFactory::create_local_transport(&config);

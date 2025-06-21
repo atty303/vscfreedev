@@ -117,17 +117,14 @@ impl ErrorClassification for YuhaError {
     }
 
     fn should_log(&self) -> bool {
-        match self.severity() {
-            ErrorSeverity::Info => false,
-            _ => true,
-        }
+        !matches!(self.severity(), ErrorSeverity::Info)
     }
 
     fn should_alert(&self) -> bool {
-        match self.severity() {
-            ErrorSeverity::Critical | ErrorSeverity::Fatal => true,
-            _ => false,
-        }
+        matches!(
+            self.severity(),
+            ErrorSeverity::Critical | ErrorSeverity::Fatal
+        )
     }
 }
 

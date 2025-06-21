@@ -5,7 +5,7 @@ use anyhow::Result;
 use shared::docker::RemoteContainer;
 use std::time::Duration;
 use yuha_client::simple_client;
-use yuha_core::protocol::ResponseItem;
+use yuha_core::protocol::simple::ResponseItem;
 
 #[tokio::test]
 async fn test_basic_local_communication() -> Result<()> {

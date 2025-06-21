@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use yuha_client::simple_client_transport::{SimpleYuhaClientTransport, connect_local};
 use yuha_client::transport::{LocalTransport, LocalTransportConfig, Transport, TransportConfig};
-use yuha_core::protocol::YuhaResponse;
+use yuha_core::protocol::simple::YuhaResponse;
 
 /// Test categories for filtering
 #[derive(Debug, Clone, Copy)]
@@ -76,7 +76,7 @@ pub fn assert_success(response: &YuhaResponse) {
 }
 
 /// Assert that a response contains data
-pub fn assert_data(response: &YuhaResponse) -> &[yuha_core::protocol::ResponseItem] {
+pub fn assert_data(response: &YuhaResponse) -> &[yuha_core::protocol::simple::ResponseItem] {
     assert_response!(data, response)
 }
 

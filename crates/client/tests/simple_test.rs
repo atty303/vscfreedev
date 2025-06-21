@@ -1,5 +1,5 @@
 use anyhow::Result;
-use yuha_core::protocol::YuhaRequest;
+use yuha_core::protocol::simple::YuhaRequest;
 
 #[tokio::test]
 async fn test_protocol_message_serialization() -> Result<()> {

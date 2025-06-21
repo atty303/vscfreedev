@@ -48,7 +48,9 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
 
         let json_data = serde_json::to_vec(request).map_err(|e| {
             warn!("Failed to serialize request: {}", e);
-            ChannelError::serialization(format!("Request serialization failed: {}", e))
+            ChannelError::Serialization {
+                reason: format!("Request serialization failed: {}", e),
+            }
         })?;
 
         self.send(Bytes::from(json_data)).await?;
@@ -62,7 +64,9 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
 
         let json_data = serde_json::to_vec(response).map_err(|e| {
             warn!("Failed to serialize response: {}", e);
-            ChannelError::serialization(format!("Response serialization failed: {}", e))
+            ChannelError::Serialization {
+                reason: format!("Response serialization failed: {}", e),
+            }
         })?;
 
         self.send(Bytes::from(json_data)).await?;
@@ -79,7 +83,9 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
 
         let result = serde_json::from_slice(&payload).map_err(|e| {
             warn!("Failed to deserialize request: {}", e);
-            ChannelError::serialization(format!("Request deserialization failed: {}", e))
+            ChannelError::Serialization {
+                reason: format!("Request deserialization failed: {}", e),
+            }
         })?;
 
         debug!("Successfully parsed request: {:?}", result);
@@ -95,7 +101,9 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
 
         let result = serde_json::from_slice(&payload).map_err(|e| {
             warn!("Failed to deserialize response: {}", e);
-            ChannelError::serialization(format!("Response deserialization failed: {}", e))
+            ChannelError::Serialization {
+                reason: format!("Response deserialization failed: {}", e),
+            }
         })?;
 
         debug!("Successfully parsed response: {:?}", result);
@@ -113,7 +121,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
                 payload_len,
                 u16::MAX
             );
-            return Err(ChannelError::buffer_overflow(payload_len).into());
+            return Err(ChannelError::BufferOverflow { size: payload_len }.into());
         }
 
         // Write payload length (2 bytes, big endian)
@@ -171,7 +179,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
             let bytes_read = self.inner.read_buf(&mut self.read_buffer).await?;
 
             if bytes_read == 0 {
-                return Err(ChannelError::Closed.into());
+                return Err(ChannelError::ChannelClosed.into());
             }
         }
     }

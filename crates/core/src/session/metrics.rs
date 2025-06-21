@@ -60,6 +60,7 @@ pub struct SessionMetricsCollector {
 struct SessionHistoryEntry {
     created_at: SystemTime,
     closed_at: Option<SystemTime>,
+    #[allow(dead_code)]
     transport_type: TransportType,
     use_count: u64,
     total_idle_time: Duration,

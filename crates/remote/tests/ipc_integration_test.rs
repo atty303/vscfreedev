@@ -3,7 +3,7 @@
 use anyhow::Result;
 use tempfile::tempdir;
 use tokio::time::{Duration, sleep};
-use yuha_core::protocol::ResponseBuffer;
+use yuha_core::protocol::simple::ResponseBuffer;
 use yuha_remote::ipc::{IpcClient, IpcCommand, IpcResponse, IpcServer};
 
 #[tokio::test]

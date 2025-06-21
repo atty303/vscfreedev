@@ -51,6 +51,7 @@ impl MessageCodec for BinaryCodec {
 /// Compressed JSON codec for large messages
 #[derive(Debug, Clone, Default)]
 pub struct CompressedJsonCodec {
+    #[allow(dead_code)]
     compression_level: u32,
 }
 
