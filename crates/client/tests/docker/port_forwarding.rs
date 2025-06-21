@@ -15,9 +15,9 @@ use std::net::TcpStream;
 #[cfg(feature = "docker-tests")]
 use std::time::Duration;
 #[cfg(feature = "docker-tests")]
-use yuha_client::simple_client;
+use yuha_client::client;
 #[cfg(feature = "docker-tests")]
-use yuha_core::protocol::simple::ResponseItem;
+use yuha_core::protocol::ResponseItem;
 
 #[cfg(feature = "docker-tests")]
 #[tokio::test]
@@ -33,7 +33,7 @@ async fn test_port_forwarding_single_with_auto_upload() -> Result<()> {
         "Connecting to 127.0.0.1:{} as root with auto-upload",
         ssh_port
     );
-    let client = simple_client::connect_ssh_with_auto_upload(
+    let client = client::connect_ssh_with_auto_upload(
         "127.0.0.1",
         ssh_port,
         "root",
@@ -75,7 +75,7 @@ async fn test_port_forwarding_multiple_with_auto_upload() -> Result<()> {
     let ssh_port = container.ssh_port().await?;
 
     // Connect to remote host with auto-upload
-    let client = simple_client::connect_ssh_with_auto_upload(
+    let client = client::connect_ssh_with_auto_upload(
         "127.0.0.1",
         ssh_port,
         "root",
@@ -125,7 +125,7 @@ async fn test_port_forwarding_stop_with_auto_upload() -> Result<()> {
     let ssh_port = container.ssh_port().await?;
 
     // Connect to remote host with auto-upload
-    let client = simple_client::connect_ssh_with_auto_upload(
+    let client = client::connect_ssh_with_auto_upload(
         "127.0.0.1",
         ssh_port,
         "root",
@@ -174,7 +174,7 @@ async fn test_port_forwarding_to_echo_service() -> Result<()> {
         "Connecting to 127.0.0.1:{} as root with auto-upload",
         ssh_port
     );
-    let client = simple_client::connect_ssh_with_auto_upload(
+    let client = client::connect_ssh_with_auto_upload(
         "127.0.0.1",
         ssh_port,
         "root",

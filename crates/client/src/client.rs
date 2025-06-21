@@ -1,13 +1,12 @@
-//! Simple client implementation using the new transport abstraction
+//! Client implementation using the transport abstraction
 //!
-//! This module provides wrapper functions that use the new transport abstraction
-//! while maintaining backward compatibility with existing code.
+//! This module provides wrapper functions that use the transport abstraction.
 
 use anyhow::Result;
 use std::path::Path;
 
 use crate::ClientError;
-use crate::simple_client_transport::{Client, connect_local, connect_ssh_transport};
+use crate::client_transport::{Client, connect_local, connect_ssh_transport};
 use crate::transport::{LocalTransport, SshTransport, TransportConfig};
 
 // Client already imported above for backward compatibility
@@ -46,7 +45,7 @@ pub async fn connect_local_process(
 ) -> Result<Client<LocalTransport>, ClientError> {
     let binary_path = binary_path
         .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from(crate::client::get_remote_binary_path()));
+        .unwrap_or_else(|| std::path::PathBuf::from(crate::get_remote_binary_path()));
 
     let transport_config = TransportConfig::default();
     connect_local(binary_path, transport_config).await

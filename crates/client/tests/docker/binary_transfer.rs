@@ -7,7 +7,7 @@ use anyhow::Result;
 #[cfg(feature = "docker-tests")]
 use serial_test::serial;
 #[cfg(feature = "docker-tests")]
-use yuha_client::simple_client;
+use yuha_client::client;
 
 #[cfg(feature = "docker-tests")]
 #[tokio::test]
@@ -20,7 +20,7 @@ async fn test_binary_transfer_and_execution() -> Result<()> {
 
     // First, try to connect without auto-upload (should fail)
     println!("Attempting connection without auto-upload (expecting failure)");
-    let result = simple_client::connect_ssh_with_auto_upload(
+    let result = client::connect_ssh_with_auto_upload(
         "127.0.0.1",
         ssh_port,
         "root",
@@ -48,7 +48,7 @@ async fn test_binary_transfer_and_execution() -> Result<()> {
 
     // Now connect with auto-upload (should succeed)
     println!("Attempting connection with auto-upload");
-    let client = simple_client::connect_ssh_with_auto_upload(
+    let client = client::connect_ssh_with_auto_upload(
         "127.0.0.1",
         ssh_port,
         "root",
@@ -83,7 +83,7 @@ async fn test_simple_binary_upload() -> Result<()> {
         ssh_port
     );
 
-    let client = simple_client::connect_ssh_with_auto_upload(
+    let client = client::connect_ssh_with_auto_upload(
         "127.0.0.1",
         ssh_port,
         "root",

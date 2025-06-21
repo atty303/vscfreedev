@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use tracing::{debug, info};
-use yuha_client::simple_client;
+use yuha_client::client;
 use yuha_core::{YuhaConfig, config::ConnectionProfile};
 
 #[derive(Parser)]
@@ -200,7 +200,7 @@ async fn main() -> Result<()> {
             if *no_daemon {
                 // Direct connection without daemon
                 let client = if effective_auto_upload {
-                    simple_client::connect_ssh_with_auto_upload(
+                    client::connect_ssh_with_auto_upload(
                         &effective_host,
                         effective_port,
                         &effective_username,
@@ -210,7 +210,7 @@ async fn main() -> Result<()> {
                     )
                     .await?
                 } else {
-                    simple_client::connect_ssh(
+                    client::connect_ssh(
                         &effective_host,
                         effective_port,
                         &effective_username,
@@ -257,7 +257,7 @@ async fn main() -> Result<()> {
 
             if *no_daemon {
                 // Direct connection without daemon
-                let client = simple_client::connect_local_process(effective_binary_path).await?;
+                let client = client::connect_local_process(effective_binary_path).await?;
 
                 info!("Connected to local process (direct)");
 

@@ -9,7 +9,7 @@ use serial_test::serial;
 #[cfg(feature = "docker-tests")]
 use std::time::Duration;
 #[cfg(feature = "docker-tests")]
-use yuha_client::simple_client;
+use yuha_client::client;
 
 /// Tests basic SSH communication with automatic binary upload.
 ///
@@ -56,7 +56,7 @@ async fn test_basic_ssh_communication_with_auto_upload() -> Result<()> {
     );
     let ssh_connect_start = std::time::Instant::now();
 
-    let client = match simple_client::connect_ssh_with_auto_upload(
+    let client = match client::connect_ssh_with_auto_upload(
         "127.0.0.1",
         ssh_port,
         "root",

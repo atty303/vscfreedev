@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 use yuha_client::transport::{LocalTransport, LocalTransportConfig, TransportConfig};
-use yuha_client::{Client, simple_client_transport::connect_local};
+use yuha_client::{Client, client_transport::connect_local};
 use yuha_core::protocol::ProtocolResponse;
 
 /// Test categories for filtering

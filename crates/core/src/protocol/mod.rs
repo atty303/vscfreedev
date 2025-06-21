@@ -6,12 +6,12 @@
 //!
 //! ## Protocol Types
 //!
-//! - **Simple Protocol**: Direct request-response communication between client and remote server
+//! - **Protocol**: Direct request-response communication between client and remote server
 //! - **Daemon Protocol**: Communication with local daemon for managing multiple sessions
 //!
 //! ## Design Philosophy
 //!
-//! The protocol layer follows a simple request-response pattern with long polling
+//! The protocol layer follows a request-response pattern with long polling
 //! for pseudo-bidirectional communication. This approach prioritizes:
 //!
 //! - **Simplicity**: Easy to understand and debug
@@ -40,7 +40,8 @@
 
 pub mod buffer;
 pub mod daemon;
-pub mod simple;
+pub mod request_response;
 
 // Re-export main protocol types for convenient access
-pub use simple::{ProtocolRequest, ProtocolResponse, ResponseBuffer, ResponseItem};
+pub use buffer::ResponseBuffer;
+pub use request_response::{ProtocolRequest, ProtocolResponse, ResponseItem};

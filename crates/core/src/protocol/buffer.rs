@@ -1,6 +1,6 @@
 //! Protocol buffer utilities for batching and buffering messages
 
-use super::simple::ResponseItem;
+use super::request_response::ResponseItem;
 use std::collections::HashMap;
 
 /// Generic protocol buffer for accumulating messages
@@ -18,14 +18,14 @@ pub trait ProtocolBuffer<T> {
     fn clear(&mut self);
 }
 
-/// Response buffer for the simple protocol
-pub struct SimpleResponseBuffer {
+/// Response buffer for the protocol
+pub struct ResponseBuffer {
     items: Vec<ResponseItem>,
     pending_connections: HashMap<u32, u16>,
     closed_connections: Vec<u32>,
 }
 
-impl SimpleResponseBuffer {
+impl ResponseBuffer {
     pub fn new() -> Self {
         Self {
             items: Vec::new(),
@@ -72,7 +72,7 @@ impl SimpleResponseBuffer {
     }
 }
 
-impl ProtocolBuffer<ResponseItem> for SimpleResponseBuffer {
+impl ProtocolBuffer<ResponseItem> for ResponseBuffer {
     fn add_item(&mut self, item: ResponseItem) {
         self.items.push(item);
     }
@@ -92,7 +92,7 @@ impl ProtocolBuffer<ResponseItem> for SimpleResponseBuffer {
     }
 }
 
-impl Default for SimpleResponseBuffer {
+impl Default for ResponseBuffer {
     fn default() -> Self {
         Self::new()
     }

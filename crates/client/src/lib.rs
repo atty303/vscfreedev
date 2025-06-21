@@ -5,10 +5,10 @@
 //!
 //! ## Key Components
 //!
-//! - **Simple Client**: Direct request-response communication with remote servers
+//! - **Client**: Direct request-response communication with remote servers
 //! - **Daemon Client**: Connection to local daemon for managing multiple sessions
 //! - **Transport Layer**: Abstraction over SSH, TCP, and local connections
-//! - **Protocol Handling**: Support for both simple and daemon communication protocols
+//! - **Protocol Handling**: Support for both client and daemon communication protocols
 //!
 //! ## Connection Types
 //!
@@ -21,10 +21,10 @@
 //!
 //! ```rust,no_run
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! use yuha_client::simple_client;
+//! use yuha_client::client;
 //!
 //! // Connect to remote server via SSH
-//! let client = simple_client::connect_ssh(
+//! let client = client::connect_ssh(
 //!     "example.com", 22, "user", None, Some("/path/to/key".as_ref())
 //! ).await?;
 //!
@@ -34,17 +34,17 @@
 //! # }
 //! ```
 
+pub mod client;
+pub mod client_transport;
 pub mod constants;
 pub mod daemon;
 pub mod daemon_client;
 pub mod daemon_protocol;
-pub mod simple_client;
-pub mod simple_client_transport;
 pub mod transport;
 pub mod transport_factory;
 
 // Re-export main client type for convenience
-pub use simple_client_transport::Client;
+pub use client_transport::Client;
 
 /// Path to the remote binary built by build.rs.
 ///
@@ -124,12 +124,7 @@ pub enum ClientError {
 // Re-export commonly used transport types
 pub use transport::ssh::{MyHandler, SshChannelAdapter};
 
-/// Utility functions for client operations
-pub mod client {
-    use super::*;
-
-    /// Get the path to the built remote binary
-    pub fn get_remote_binary_path() -> &'static str {
-        REMOTE_BINARY_PATH
-    }
+/// Get the path to the built remote binary
+pub fn get_remote_binary_path() -> &'static str {
+    REMOTE_BINARY_PATH
 }

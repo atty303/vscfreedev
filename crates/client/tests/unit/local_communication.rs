@@ -1,8 +1,8 @@
 use anyhow::Result;
 use serial_test::serial;
 use std::time::Duration;
-use yuha_client::simple_client;
-use yuha_core::protocol::simple::ResponseItem;
+use yuha_client::client;
+use yuha_core::protocol::ResponseItem;
 
 #[tokio::test]
 #[serial]
@@ -17,7 +17,7 @@ async fn test_basic_local_communication() -> Result<()> {
     println!("Connecting to local yuha-remote process");
     let connect_start = std::time::Instant::now();
 
-    let client = match simple_client::connect_local_process(None).await {
+    let client = match client::connect_local_process(None).await {
         Ok(client) => {
             println!("Local connection successful!");
             client

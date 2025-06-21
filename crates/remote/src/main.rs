@@ -12,6 +12,7 @@ use tokio::sync::{RwLock, mpsc};
 use tracing::{error, info, warn};
 
 use yuha_core::message_channel::MessageChannel;
+use yuha_core::protocol::buffer::ProtocolBuffer;
 use yuha_core::protocol::{ProtocolRequest, ProtocolResponse, ResponseBuffer};
 use yuha_core::{browser, clipboard};
 use yuha_remote::ipc::{IpcClient, IpcCommand, IpcResponse, get_default_ipc_socket_path};
@@ -80,7 +81,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
 
     /// Run the server main loop
     pub async fn run(&mut self) -> Result<()> {
-        info!("Remote server starting with simple request-response protocol");
+        info!("Remote server starting with request-response protocol");
 
         loop {
             match self.message_channel.receive_request().await {
