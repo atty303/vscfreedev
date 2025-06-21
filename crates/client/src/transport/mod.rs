@@ -13,10 +13,20 @@ pub mod ssh;
 pub mod tcp;
 pub mod wsl;
 
+#[cfg(unix)]
+pub mod unix;
+#[cfg(windows)]
+pub mod windows;
+
 pub use local::LocalTransport;
 pub use ssh::SshTransport;
 pub use tcp::TcpTransport;
 pub use wsl::WslTransport;
+
+#[cfg(unix)]
+pub use unix::UnixTransport;
+#[cfg(windows)]
+pub use windows::WindowsTransport;
 
 /// Configuration for transport connection
 #[derive(Debug, Clone, Default)]

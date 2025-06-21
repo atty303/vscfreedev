@@ -1,5 +1,8 @@
 //! Client-side library for yuha
 
+pub mod daemon;
+pub mod daemon_client;
+pub mod daemon_protocol;
 pub mod simple_client;
 pub mod simple_client_transport;
 pub mod transport;
@@ -31,6 +34,12 @@ pub enum ClientError {
 
     #[error("Binary transfer error: {0}")]
     BinaryTransfer(String),
+
+    #[error("Daemon error: {message} (code: {code:?})")]
+    DaemonError {
+        code: crate::daemon_protocol::ErrorCode,
+        message: String,
+    },
 }
 
 // Re-export for backward compatibility

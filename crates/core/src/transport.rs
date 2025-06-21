@@ -202,6 +202,46 @@ impl Default for TransportConfig {
     }
 }
 
+impl TransportConfig {
+    /// Generate a connection key for identifying similar connections
+    pub fn connection_key(&self) -> String {
+        match self.transport_type {
+            TransportType::Ssh => {
+                if let Some(ssh) = &self.ssh {
+                    format!("ssh://{}@{}:{}", ssh.username, ssh.host, ssh.port)
+                } else {
+                    "ssh://unknown".to_string()
+                }
+            }
+            TransportType::Local => {
+                if let Some(local) = &self.local {
+                    format!("local://{}", local.binary_path.display())
+                } else {
+                    "local://unknown".to_string()
+                }
+            }
+            TransportType::Tcp => {
+                if let Some(tcp) = &self.tcp {
+                    format!("tcp://{}:{}", tcp.host, tcp.port)
+                } else {
+                    "tcp://unknown".to_string()
+                }
+            }
+            TransportType::Wsl => {
+                if let Some(wsl) = &self.wsl {
+                    format!(
+                        "wsl://{}@{}",
+                        wsl.user.as_deref().unwrap_or("default"),
+                        wsl.distribution.as_deref().unwrap_or("default")
+                    )
+                } else {
+                    "wsl://default".to_string()
+                }
+            }
+        }
+    }
+}
+
 impl Default for LocalTransportConfig {
     fn default() -> Self {
         Self {
@@ -246,6 +286,13 @@ impl TransportFactory {
     /// Create a new transport factory
     pub fn new(config: YuhaConfig) -> Self {
         Self { config }
+    }
+
+    /// Create a transport from configuration
+    pub fn create(config: TransportConfig) -> Result<TransportConfig> {
+        // For now, just return the config as-is
+        // In the actual implementation, this would create the appropriate transport instance
+        Ok(config)
     }
 
     /// Create a transport configuration from a connection profile

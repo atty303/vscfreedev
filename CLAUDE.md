@@ -17,7 +17,7 @@ YuhaはRustで書かれたリモート開発ツールで、SSH経由でリモー
 yuha/
 ├── crates/
 │   ├── cli/          # CLIインターフェース
-│   ├── client/       # クライアント側実装
+│   ├── client/       # クライアント側実装（デーモン機能を含む）
 │   ├── core/         # 共通機能・プロトコル
 │   ├── gui/          # GUIインターフェース  
 │   └── remote/       # リモートサーバー実装
@@ -93,6 +93,9 @@ cargo test
 
 # CLI実行
 cargo run -p yuha-cli
+
+# デーモン起動
+cargo run -p yuha-cli -- daemon start
 
 # リモートサーバー実行
 cargo run -p yuha-remote -- --stdio
