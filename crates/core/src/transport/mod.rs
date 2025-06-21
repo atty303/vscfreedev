@@ -33,21 +33,13 @@
 //! ## Usage Example
 //!
 //! ```rust,no_run
-//! use yuha_core::transport::{TransportFactory, TransportConfig, TransportType};
+//! use yuha_core::transport::{TransportBuilder, TransportType};
 //!
-//! let config = TransportConfig {
-//!     transport_type: TransportType::Ssh,
-//!     ssh: Some(SshConfig {
-//!         host: "example.com".to_string(),
-//!         username: "user".to_string(),
-//!         key_path: Some("/path/to/key".into()),
-//!         ..Default::default()
-//!     }),
-//!     ..Default::default()
-//! };
-//!
-//! let transport = TransportFactory::create(config)?;
-//! let stream = transport.connect().await?;
+//! let config = TransportBuilder::ssh()
+//!     .host("example.com")
+//!     .username("user")
+//!     .key_path("/path/to/key")
+//!     .build()?;
 //! ```
 
 use crate::error::{Result, TransportError};
@@ -58,12 +50,10 @@ use std::path::PathBuf;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 pub mod builder;
-pub mod factory;
 pub mod types;
 
 // Re-export commonly used types
 pub use builder::TransportBuilder;
-pub use factory::TransportFactory;
 pub use types::*;
 
 /// Trait that combines AsyncRead + AsyncWrite for transport streams

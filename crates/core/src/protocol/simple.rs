@@ -43,7 +43,6 @@
 //! }
 //! ```
 
-use super::Message;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -89,14 +88,6 @@ pub enum ResponseItem {
     CloseConnection { connection_id: u32 },
     ClipboardContent { content: String },
 }
-
-impl Message for ProtocolRequest {}
-impl super::Request for ProtocolRequest {}
-
-impl Message for ProtocolResponse {}
-impl super::Response for ProtocolResponse {}
-
-impl Message for ResponseItem {}
 
 /// Response buffer for accumulating response items
 pub struct ResponseBuffer {

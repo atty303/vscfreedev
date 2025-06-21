@@ -1,6 +1,5 @@
 //! Daemon protocol implementation for CLI-daemon communication
 
-use super::{Message, Request, Response};
 use crate::session::SessionId;
 use crate::transport::TransportConfig;
 use bytes::Bytes;
@@ -227,17 +226,3 @@ impl Default for DaemonConfig {
         }
     }
 }
-
-impl Message for DaemonRequest {}
-impl Request for DaemonRequest {}
-
-impl Message for DaemonResponse {}
-impl Response for DaemonResponse {}
-
-impl Message for DaemonCommand {}
-impl Message for CommandResult {}
-impl Message for SessionSummary {}
-impl Message for SessionDetails {}
-impl Message for PortForwardInfo {}
-impl Message for ErrorCode {}
-impl Message for DaemonConfig {}

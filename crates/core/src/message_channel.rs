@@ -42,74 +42,6 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
         }
     }
 
-    /// Send a request over the channel
-    pub async fn send_request(&mut self, request: &ProtocolRequest) -> Result<()> {
-        debug!("Sending request: {:?}", request);
-
-        let json_data = serde_json::to_vec(request).map_err(|e| {
-            warn!("Failed to serialize request: {}", e);
-            ChannelError::Serialization {
-                reason: format!("Request serialization failed: {}", e),
-            }
-        })?;
-
-        self.send(Bytes::from(json_data)).await?;
-        debug!("Request sent successfully");
-        Ok(())
-    }
-
-    /// Send a response over the channel
-    pub async fn send_response(&mut self, response: &ProtocolResponse) -> Result<()> {
-        debug!("Sending response: {:?}", response);
-
-        let json_data = serde_json::to_vec(response).map_err(|e| {
-            warn!("Failed to serialize response: {}", e);
-            ChannelError::Serialization {
-                reason: format!("Response serialization failed: {}", e),
-            }
-        })?;
-
-        self.send(Bytes::from(json_data)).await?;
-        debug!("Response sent successfully");
-        Ok(())
-    }
-
-    /// Receive a request from the channel
-    pub async fn receive_request(&mut self) -> Result<ProtocolRequest> {
-        debug!("Waiting for request...");
-
-        let payload = self.receive().await?;
-        debug!("Received request payload ({} bytes)", payload.len());
-
-        let result = serde_json::from_slice(&payload).map_err(|e| {
-            warn!("Failed to deserialize request: {}", e);
-            ChannelError::Serialization {
-                reason: format!("Request deserialization failed: {}", e),
-            }
-        })?;
-
-        debug!("Successfully parsed request: {:?}", result);
-        Ok(result)
-    }
-
-    /// Receive a response from the channel
-    pub async fn receive_response(&mut self) -> Result<ProtocolResponse> {
-        debug!("Waiting for response...");
-
-        let payload = self.receive().await?;
-        debug!("Received response payload ({} bytes)", payload.len());
-
-        let result = serde_json::from_slice(&payload).map_err(|e| {
-            warn!("Failed to deserialize response: {}", e);
-            ChannelError::Serialization {
-                reason: format!("Response deserialization failed: {}", e),
-            }
-        })?;
-
-        debug!("Successfully parsed response: {:?}", result);
-        Ok(result)
-    }
-
     /// Send a raw message over the channel
     pub async fn send(&mut self, payload: Bytes) -> Result<()> {
         let payload_len = payload.len();
@@ -153,6 +85,52 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
     pub async fn receive(&mut self) -> Result<Bytes> {
         // No timeout - block until data is available
         self.receive_binary().await
+    }
+
+    /// Receive a request from the channel
+    pub async fn receive_request(&mut self) -> Result<ProtocolRequest> {
+        let payload = self.receive().await?;
+        serde_json::from_slice(&payload).map_err(|e| {
+            warn!("Failed to deserialize request: {}", e);
+            ChannelError::Serialization {
+                reason: format!("Request deserialization failed: {}", e),
+            }
+            .into()
+        })
+    }
+
+    /// Send a response over the channel
+    pub async fn send_response(&mut self, response: &ProtocolResponse) -> Result<()> {
+        let json_data = serde_json::to_vec(response).map_err(|e| {
+            warn!("Failed to serialize response: {}", e);
+            ChannelError::Serialization {
+                reason: format!("Response serialization failed: {}", e),
+            }
+        })?;
+        self.send(Bytes::from(json_data)).await
+    }
+
+    /// Send a request over the channel
+    pub async fn send_request(&mut self, request: &ProtocolRequest) -> Result<()> {
+        let json_data = serde_json::to_vec(request).map_err(|e| {
+            warn!("Failed to serialize request: {}", e);
+            ChannelError::Serialization {
+                reason: format!("Request serialization failed: {}", e),
+            }
+        })?;
+        self.send(Bytes::from(json_data)).await
+    }
+
+    /// Receive a response from the channel
+    pub async fn receive_response(&mut self) -> Result<ProtocolResponse> {
+        let payload = self.receive().await?;
+        serde_json::from_slice(&payload).map_err(|e| {
+            warn!("Failed to deserialize response: {}", e);
+            ChannelError::Serialization {
+                reason: format!("Response deserialization failed: {}", e),
+            }
+            .into()
+        })
     }
 
     async fn receive_binary(&mut self) -> Result<Bytes> {

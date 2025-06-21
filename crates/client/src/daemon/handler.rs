@@ -11,10 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
-use yuha_core::{
-    TransportFactory,
-    session::{SessionId, SessionManager, SessionStatus},
-};
+use yuha_core::session::{SessionId, SessionManager, SessionStatus};
 
 /// Active client connections mapped by session ID
 type ClientMap = Arc<Mutex<HashMap<SessionId, Arc<Mutex<Box<dyn std::any::Any + Send>>>>>>;
@@ -277,7 +274,7 @@ impl RequestHandler {
     async fn connect_client(
         &self,
         session_id: SessionId,
-        transport_config: yuha_core::transport::TransportConfig,
+        _transport_config: yuha_core::transport::TransportConfig,
     ) -> anyhow::Result<()> {
         // Update session status
         self.session_manager
@@ -285,7 +282,7 @@ impl RequestHandler {
             .await?;
 
         // Create transport and connect
-        let _transport = TransportFactory::create(transport_config)?;
+        // TODO: Use ClientTransportFactory::create_transport(transport_config) when needed
 
         // This is a simplified version - in reality, we'd need to handle different transport types
         // For now, we'll store a placeholder

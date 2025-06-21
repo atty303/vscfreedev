@@ -38,7 +38,7 @@ pub use metrics::{METRICS, MetricsCollector, MetricsConfig, Timer};
 pub use session::{
     SessionId, SessionManager, SessionManagerConfig, SessionMetadata, SessionStats, SessionStatus,
 };
-pub use transport::{TransportConfig, TransportFactory, TransportType};
+pub use transport::{TransportConfig, TransportType};
 
 #[cfg(test)]
 mod tests {
