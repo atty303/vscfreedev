@@ -84,24 +84,84 @@ enum YuhaResponse {
 
 ### ビルド・実行
 
+プロジェクトはMiseタスクランナーを使用しています。以下のコマンドで開発タスクを実行してください：
+
+#### 基本的なビルド・実行
 ```bash
 # 全体ビルド
-cargo build
+mise run build
 
-# 高速テスト実行（単体テストのみ）
-cargo test
-
-# 全テスト実行（Dockerテストを含む）
-cargo test --features docker-tests
+# リリースビルド
+mise run build-release
 
 # CLI実行
-cargo run -p yuha-cli
-
-# デーモン起動
-cargo run -p yuha-cli -- daemon start
+mise run run-cli
 
 # リモートサーバー実行
-cargo run -p yuha-remote -- --stdio
+mise run run-remote
+```
+
+#### テスト実行
+```bash
+# 高速テスト実行（単体テストのみ）
+mise run test-fast
+
+# 全テスト実行（Dockerテストを含む）
+mise run test-all
+
+# 単体テストのみ
+mise run test-unit
+
+# Dockerテストのみ
+mise run test-docker
+```
+
+#### デーモン操作
+```bash
+# デーモン起動
+mise run daemon-start
+
+# デーモン停止
+mise run daemon-stop
+
+# デーモンステータス確認
+mise run daemon-status
+
+# アクティブセッション一覧
+mise run daemon-sessions
+
+# デーモンデモ実行
+mise run daemon-demo
+```
+
+#### 開発ワークフロー
+```bash
+# コード整形
+mise run format
+
+# コード整形チェック（変更なし）
+mise run format-check
+
+# Lint実行
+mise run lint
+
+# 開発用チェック（format + lint + test-fast）
+mise run dev
+
+# CI用チェック（format-check + lint + test-all）
+mise run ci
+
+# クイックチェック（format-check + lint）
+mise run check
+
+# ビルド成果物削除
+mise run clean
+```
+
+#### 利用可能なタスク一覧
+```bash
+# すべてのタスクを表示
+mise tasks
 ```
 
 ### テスト戦略
@@ -123,14 +183,14 @@ cargo run -p yuha-remote -- --stdio
 
 ```bash
 # 高速テストのみ（Dockerなし）
-cargo test -p yuha-client
+mise run test-fast
 
 # 全テスト（Docker必要）
-cargo test -p yuha-client --features docker-tests
+mise run test-all
 
 # 特定のテストカテゴリ
-cargo test -p yuha-client unit::                    # 単体テストのみ
-cargo test -p yuha-client --features docker-tests docker::  # Dockerテストのみ
+mise run test-unit      # 単体テストのみ
+mise run test-docker    # Dockerテストのみ
 ```
 
 ### デバッグ

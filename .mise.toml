@@ -1,3 +1,6 @@
+# Mise configuration for Yuha project
+# Run tasks with: mise run <task-name>
+
 [tools]
 rust = "latest"
 "cargo:cargo-zigbuild" = "latest"
@@ -9,3 +12,114 @@ pkl = "latest"
 run = [
     "rustup target add x86_64-unknown-linux-gnu",
 ]
+
+[tasks.build]
+description = "Build all workspace crates"
+run = "cargo build --workspace"
+
+[tasks.build-release]
+description = "Build all workspace crates in release mode"
+run = "cargo build --workspace --release"
+
+[tasks.test-fast]
+description = "Run fast tests only (excluding Docker/SSH tests)"
+env = { YUHA_FAST_TEST = "1", RUST_LOG = "debug" }
+run = "cargo test --workspace -- --nocapture"
+
+[tasks.test-all]
+description = "Run all tests including slow Docker/SSH tests"
+env = { RUST_LOG = "debug" }
+run = "cargo test --workspace -- --nocapture"
+
+[tasks.test-unit]
+description = "Run unit tests only"
+run = "cargo test -p yuha-client unit::"
+
+[tasks.test-docker]
+description = "Run Docker integration tests"
+run = "cargo test -p yuha-client --features docker-tests docker::"
+
+[tasks.lint]
+description = "Run cargo clippy for linting"
+run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
+
+[tasks.format]
+description = "Format code with rustfmt"
+run = "cargo fmt --all"
+
+[tasks.format-check]
+description = "Check code formatting without modifying files"
+run = "cargo fmt --all -- --check"
+
+[tasks.clean]
+description = "Clean build artifacts"
+run = "cargo clean"
+
+[tasks.run-cli]
+description = "Run CLI binary"
+run = "cargo run -p yuha-cli"
+
+[tasks.run-remote]
+description = "Run remote server binary with stdio"
+run = "cargo run -p yuha-remote -- --stdio"
+
+[tasks.daemon-start]
+description = "Start Yuha daemon"
+run = "cargo run -p yuha-cli -- daemon start"
+
+[tasks.daemon-stop]
+description = "Stop Yuha daemon"
+run = "cargo run -p yuha-cli -- daemon stop"
+
+[tasks.daemon-status]
+description = "Check Yuha daemon status"
+run = "cargo run -p yuha-cli -- daemon status"
+
+[tasks.daemon-sessions]
+description = "List active daemon sessions"
+run = "cargo run -p yuha-cli -- daemon sessions"
+
+[tasks.daemon-demo]
+description = "Run daemon functionality demo"
+run = '''
+echo "=== Yuha Daemon Demo (Integrated) ==="
+echo
+
+echo "1. Checking daemon status..."
+cargo run -p yuha-cli -- daemon status
+
+echo -e "\n2. Starting daemon..."
+cargo run -p yuha-cli -- daemon start &
+DAEMON_PID=$!
+
+sleep 3
+
+echo -e "\n3. Checking daemon status again..."
+cargo run -p yuha-cli -- daemon status
+
+echo -e "\n4. Listing sessions..."
+cargo run -p yuha-cli -- daemon sessions
+
+echo -e "\n5. Stopping daemon..."
+cargo run -p yuha-cli -- daemon stop
+
+sleep 2
+
+echo -e "\n6. Final status check..."
+cargo run -p yuha-cli -- daemon status
+
+echo -e "\n=== Demo Complete ==="
+echo "Note: The daemon is now integrated into the CLI binary and runs in the background"
+'''
+
+[tasks.dev]
+description = "Development workflow: format, lint, and test-fast"
+depends = ["format", "lint", "test-fast"]
+
+[tasks.ci]
+description = "CI workflow: format-check, lint, and test-all"
+depends = ["format-check", "lint", "test-all"]
+
+[tasks.check]
+description = "Quick check: format-check and clippy"
+depends = ["format-check", "lint"]
