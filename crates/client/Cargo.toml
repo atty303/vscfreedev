@@ -30,3 +30,7 @@ rand = { workspace = true }
 bytes = { workspace = true }
 anyhow = { workspace = true }
 serial_test = "3.0"
+
+[features]
+default = []
+docker-tests = []

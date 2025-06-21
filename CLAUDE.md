@@ -88,8 +88,11 @@ enum YuhaResponse {
 # 全体ビルド
 cargo build
 
-# テスト実行
+# 高速テスト実行（単体テストのみ）
 cargo test
+
+# 全テスト実行（Dockerテストを含む）
+cargo test --features docker-tests
 
 # CLI実行
 cargo run -p yuha-cli
@@ -103,9 +106,32 @@ cargo run -p yuha-remote -- --stdio
 
 ### テスト戦略
 
-- **単体テスト**: 各クレートで基本機能をテスト
-- **統合テスト**: クライアント・サーバー間の通信をテスト
-- **プロトコルテスト**: メッセージシリアライゼーション・デシリアライゼーションをテスト
+テストは機能別に整理され、実行速度と依存関係によって分類されています：
+
+- **単体テスト** (`tests/unit/`): 外部依存なしの高速テスト
+  - `local_communication.rs` - ローカルプロセス通信
+  - `protocol_serialization.rs` - プロトコルメッセージのシリアライゼーション
+  - `local_transport.rs` - ローカル転送実装
+  - `comprehensive_local.rs` - 包括的なローカル機能テスト
+
+- **Dockerテスト** (`tests/docker/`): Docker コンテナを使用する統合テスト
+  - `ssh_communication.rs` - SSH通信とバイナリ自動アップロード
+  - `port_forwarding.rs` - SSH経由のポートフォワーディング
+  - `binary_transfer.rs` - バイナリアップロードと実行テスト
+
+**テスト実行方法**:
+
+```bash
+# 高速テストのみ（Dockerなし）
+cargo test -p yuha-client
+
+# 全テスト（Docker必要）
+cargo test -p yuha-client --features docker-tests
+
+# 特定のテストカテゴリ
+cargo test -p yuha-client unit::                    # 単体テストのみ
+cargo test -p yuha-client --features docker-tests docker::  # Dockerテストのみ
+```
 
 ### デバッグ
 

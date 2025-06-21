@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 use yuha_client::simple_client_transport::{SimpleYuhaClientTransport, connect_local};
-use yuha_client::transport::{LocalTransport, LocalTransportConfig, Transport, TransportConfig};
+use yuha_client::transport::{LocalTransport, LocalTransportConfig, TransportConfig};
 use yuha_core::protocol::simple::YuhaResponse;
 
 /// Test categories for filtering
@@ -98,7 +98,7 @@ impl TestFixture {
     }
 
     /// Test clipboard round-trip
-    pub async fn test_clipboard_roundtrip(&mut self, content: &str) -> anyhow::Result<()> {
+    pub async fn test_clipboard_roundtrip(&self, content: &str) -> anyhow::Result<()> {
         // Set clipboard
         self.client.set_clipboard(content.to_string()).await?;
 
