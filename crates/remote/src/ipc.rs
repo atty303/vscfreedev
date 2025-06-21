@@ -11,7 +11,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{RwLock, mpsc};
 use tracing::{error, info};
-use yuha_core::protocol::ResponseBuffer;
+use yuha_core::protocol::simple::ResponseBuffer;
 
 /// IPC command that can be sent from shell to remote process
 #[derive(Debug, Clone, Serialize, Deserialize)]

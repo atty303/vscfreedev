@@ -88,7 +88,7 @@ impl RequestHandler {
         let connection_key = transport_config.connection_key();
         if let Some(session_id) = self
             .session_manager
-            .find_pooled_session(&connection_key)
+            .find_reusable_session(&connection_key)
             .await
         {
             // Mark session as used
@@ -210,7 +210,7 @@ impl RequestHandler {
 
     /// Handle get session info request
     async fn handle_get_session_info(&self, session_id: SessionId) -> DaemonResponse {
-        match self.session_manager.get_session_metadata(session_id).await {
+        match self.session_manager.get_session(session_id).await {
             Some(metadata) => {
                 let details = SessionDetails {
                     id: metadata.id,

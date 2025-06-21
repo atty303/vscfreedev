@@ -401,7 +401,6 @@ async fn handle_ssh_via_daemon(
     auto_upload_binary: bool,
 ) -> Result<()> {
     use yuha_client::daemon_client::DaemonClient;
-    use yuha_core::transport::{TransportConfig, TransportType};
 
     // Ensure daemon is running
     ensure_daemon_running().await?;
@@ -410,23 +409,21 @@ async fn handle_ssh_via_daemon(
     let mut daemon_client = DaemonClient::connect(None).await?;
 
     // Create transport config for SSH
-    let transport_config = TransportConfig {
-        transport_type: TransportType::Ssh,
-        ssh: Some(yuha_core::transport::SshTransportConfig {
-            host: host.to_string(),
-            port,
-            username: username.to_string(),
-            password: password.map(|p| p.to_string()),
-            key_path: key_path.map(|p| p.to_path_buf()),
-            auto_upload_binary,
-            timeout: 30,
-            keepalive: 60,
-        }),
-        local: None,
-        tcp: None,
-        wsl: None,
-        general: yuha_core::transport::GeneralTransportConfig::default(),
-    };
+    let mut builder = yuha_core::transport::TransportBuilder::ssh()
+        .host(host)
+        .port(port)
+        .username(username)
+        .timeout(30);
+    
+    if let Some(pwd) = password {
+        builder = builder.password(pwd);
+    }
+    
+    if let Some(key) = key_path {
+        builder = builder.key_file(key);
+    }
+    
+    let transport_config = builder.build()?;
 
     // Create or connect to session
     let session_name = format!("ssh-{}@{}:{}", username, host, port);
@@ -462,7 +459,6 @@ async fn handle_ssh_via_daemon(
 /// Handle local connection via daemon
 async fn handle_local_via_daemon(binary_path: Option<&std::path::Path>) -> Result<()> {
     use yuha_client::daemon_client::DaemonClient;
-    use yuha_core::transport::{TransportConfig, TransportType};
 
     // Ensure daemon is running
     ensure_daemon_running().await?;
@@ -475,18 +471,10 @@ async fn handle_local_via_daemon(binary_path: Option<&std::path::Path>) -> Resul
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::path::PathBuf::from("yuha-remote"));
 
-    let transport_config = TransportConfig {
-        transport_type: TransportType::Local,
-        ssh: None,
-        local: Some(yuha_core::transport::LocalTransportConfig {
-            binary_path: effective_binary_path,
-            args: vec!["--stdio".to_string()],
-            working_dir: None,
-        }),
-        tcp: None,
-        wsl: None,
-        general: yuha_core::transport::GeneralTransportConfig::default(),
-    };
+    let transport_config = yuha_core::transport::TransportBuilder::local()
+        .binary_path(effective_binary_path)
+        .args(vec!["--stdio".to_string()])
+        .build()?;
 
     // Create or connect to session
     let session_name = "local".to_string();

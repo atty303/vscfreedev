@@ -1,9 +1,13 @@
+//! Simple protocol implementation for direct client-server communication
+
+use super::{Message, Request, Response};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Simple protocol request types
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum YuhaRequest {
+pub enum SimpleRequest {
     PollData,
     StartPortForward {
         local_port: u16,
@@ -26,13 +30,15 @@ pub enum YuhaRequest {
     },
 }
 
+/// Simple protocol response types
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum YuhaResponse {
+pub enum SimpleResponse {
     Data { items: Vec<ResponseItem> },
     Success,
     Error { message: String },
 }
 
+/// Response data items for the simple protocol
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ResponseItem {
     PortForwardData { connection_id: u32, data: Bytes },
@@ -41,6 +47,15 @@ pub enum ResponseItem {
     ClipboardContent { content: String },
 }
 
+impl Message for SimpleRequest {}
+impl Request for SimpleRequest {}
+
+impl Message for SimpleResponse {}
+impl Response for SimpleResponse {}
+
+impl Message for ResponseItem {}
+
+/// Response buffer for accumulating response items
 pub struct ResponseBuffer {
     items: Vec<ResponseItem>,
     pending_connections: HashMap<u32, u16>,
@@ -103,3 +118,7 @@ impl Default for ResponseBuffer {
         Self::new()
     }
 }
+
+// Re-export original names for backward compatibility
+pub use SimpleRequest as YuhaRequest;
+pub use SimpleResponse as YuhaResponse;

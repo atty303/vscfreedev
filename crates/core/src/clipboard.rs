@@ -15,7 +15,9 @@ pub fn get_clipboard() -> Result<String> {
 
     let storage = CLIPBOARD_STORAGE
         .read()
-        .map_err(|e| ClipboardError::lock_failed(format!("Read lock poisoned: {}", e)))?;
+        .map_err(|e| ClipboardError::LockFailed {
+            reason: format!("Read lock poisoned: {}", e),
+        })?;
 
     let content = storage.clone();
     debug!(
@@ -34,7 +36,9 @@ pub fn set_clipboard(content: &str) -> Result<()> {
 
     let mut storage = CLIPBOARD_STORAGE
         .write()
-        .map_err(|e| ClipboardError::lock_failed(format!("Write lock poisoned: {}", e)))?;
+        .map_err(|e| ClipboardError::LockFailed {
+            reason: format!("Write lock poisoned: {}", e),
+        })?;
 
     *storage = content.to_string();
     debug!("Successfully set clipboard content");

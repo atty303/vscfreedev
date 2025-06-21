@@ -12,7 +12,7 @@ use tokio::sync::{RwLock, mpsc};
 use tracing::{error, info, warn};
 
 use yuha_core::message_channel::MessageChannel;
-use yuha_core::protocol::{ResponseBuffer, YuhaRequest, YuhaResponse};
+use yuha_core::protocol::simple::{ResponseBuffer, YuhaRequest, YuhaResponse};
 use yuha_core::{browser, clipboard};
 use yuha_remote::ipc::{IpcClient, IpcCommand, IpcResponse, get_default_ipc_socket_path};
 

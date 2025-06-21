@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use yuha_core::message_channel::MessageChannel;
-use yuha_core::protocol::{ResponseItem, YuhaRequest, YuhaResponse};
+use yuha_core::protocol::simple::{ResponseItem, YuhaRequest, YuhaResponse};
 
 use crate::ClientError;
 use crate::transport::{Transport, TransportConfig};

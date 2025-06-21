@@ -31,10 +31,17 @@ impl DaemonServer {
     pub fn new(config: DaemonConfig) -> Self {
         // Create session manager with configuration
         let session_config = SessionManagerConfig {
-            max_concurrent_sessions: 50,
-            max_sessions_per_connection: 5,
-            max_idle_time: std::time::Duration::from_secs(config.session_idle_timeout),
-            enable_pooling: config.enable_session_pooling,
+            pool: yuha_core::session::SessionPoolConfig {
+                enabled: config.enable_session_pooling,
+                max_sessions_per_connection: 5,
+                max_total_sessions: 50,
+                min_idle_time: config.session_idle_timeout,
+                ..Default::default()
+            },
+            lifecycle: yuha_core::session::SessionLifecycleConfig {
+                max_idle_time: std::time::Duration::from_secs(config.session_idle_timeout),
+                ..Default::default()
+            },
             ..Default::default()
         };
 

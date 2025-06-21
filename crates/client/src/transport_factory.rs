@@ -140,7 +140,7 @@ impl ClientTransportFactory {
             host: tcp_config.host.clone(),
             port: tcp_config.port,
             connection_timeout: Duration::from_secs(tcp_config.timeout),
-            keepalive: tcp_config.keepalive,
+            keepalive: true, // Enable keepalive
         };
 
         info!(

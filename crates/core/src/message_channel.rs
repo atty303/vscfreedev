@@ -3,8 +3,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::{debug, warn};
 
-use crate::error::{ChannelError, Result};
-use crate::protocol::{YuhaRequest, YuhaResponse};
+use crate::error::{ProtocolError as ChannelError, Result};
+use crate::protocol::simple::{YuhaRequest, YuhaResponse};
 
 /// A simple message for direct client-remote communication
 #[derive(Debug, Clone)]

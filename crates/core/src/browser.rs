@@ -32,17 +32,19 @@ fn validate_url(url: &str) -> Result<()> {
                 "http" | "https" | "file" | "ftp" => Ok(()),
                 unsupported => {
                     warn!("Unsupported URL scheme: {}", unsupported);
-                    Err(BrowserError::invalid_url(format!(
-                        "Unsupported scheme '{}' in URL: {}",
-                        unsupported, url
-                    ))
+                    Err(BrowserError::InvalidUrl {
+                        url: url.to_string(),
+                    }
                     .into())
                 }
             }
         }
         Err(e) => {
             warn!("URL validation failed for '{}': {}", url, e);
-            Err(BrowserError::invalid_url(format!("Invalid URL format: {}", e)).into())
+            Err(BrowserError::InvalidUrl {
+                url: url.to_string(),
+            }
+            .into())
         }
     }
 }

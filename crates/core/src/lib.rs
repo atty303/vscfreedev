@@ -11,7 +11,7 @@ pub mod transport;
 
 // Re-export commonly used types
 pub use config::YuhaConfig;
-pub use error::{BrowserError, ChannelError, ClipboardError, Result, YuhaError};
+pub use error::{BrowserError, ClipboardError, ProtocolError as ChannelError, Result, YuhaError};
 pub use logging::{LogFormat, LogLevel, LogOutput, LoggerBuilder, LoggingConfig};
 pub use metrics::{METRICS, MetricsCollector, MetricsConfig, Timer};
 pub use session::{
