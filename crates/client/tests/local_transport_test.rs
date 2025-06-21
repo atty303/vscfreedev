@@ -1,10 +1,12 @@
 //! Test for local transport implementation
 
+use serial_test::serial;
 use std::path::PathBuf;
 use yuha_client::simple_client_transport::{SimpleYuhaClientTransport, connect_local};
 use yuha_client::transport::{LocalTransport, LocalTransportConfig, TransportConfig};
 
 #[tokio::test]
+#[serial]
 async fn test_local_transport_connection() {
     // Get the built remote binary path
     let remote_binary_path = PathBuf::from(yuha_client::client::get_remote_binary_path());
@@ -36,6 +38,7 @@ async fn test_local_transport_connection() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_local_transport_with_helper() {
     // Get the built remote binary path
     let remote_binary_path = PathBuf::from(yuha_client::client::get_remote_binary_path());
@@ -52,6 +55,7 @@ async fn test_local_transport_with_helper() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_local_transport_with_env_vars() {
     // Get the built remote binary path
     let remote_binary_path = PathBuf::from(yuha_client::client::get_remote_binary_path());

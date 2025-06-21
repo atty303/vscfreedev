@@ -1,9 +1,11 @@
 use anyhow::Result;
+use serial_test::serial;
 use std::path::PathBuf;
 use yuha_client::simple_client;
 use yuha_core::protocol::simple::{YuhaRequest, YuhaResponse};
 
 #[tokio::test]
+#[serial]
 async fn test_local_transport_connection() -> Result<()> {
     // Test local transport connection
     let binary_path = PathBuf::from(yuha_client::client::get_remote_binary_path());
@@ -20,6 +22,7 @@ async fn test_local_transport_connection() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_protocol_message_creation() -> Result<()> {
     // Test that we can create protocol messages
     let request = YuhaRequest::GetClipboard;

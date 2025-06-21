@@ -1,7 +1,9 @@
 use anyhow::Result;
+use serial_test::serial;
 use yuha_core::protocol::simple::YuhaRequest;
 
 #[tokio::test]
+#[serial]
 async fn test_protocol_message_serialization() -> Result<()> {
     // Test basic message serialization
     let start_request = YuhaRequest::StartPortForward {

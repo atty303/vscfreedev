@@ -1,16 +1,26 @@
 //! Comprehensive functionality tests using local transport for fast execution
 
+use serial_test::serial;
 use std::time::Duration;
 use tokio::time::sleep;
+use yuha_client::simple_client_transport::SimpleYuhaClientTransport;
+use yuha_client::transport::LocalTransport;
 
 mod shared;
 use shared::test_utils::*;
 
+// Global client to prevent multiple simultaneous processes
+static CLIENT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn get_shared_client() -> anyhow::Result<SimpleYuhaClientTransport<LocalTransport>> {
+    let _lock = CLIENT_LOCK.lock().await;
+    create_local_client().await
+}
+
 #[tokio::test]
+#[serial]
 async fn test_basic_connection_and_polling() {
-    let client = create_local_client()
-        .await
-        .expect("Failed to create client");
+    let client = get_shared_client().await.expect("Failed to create client");
 
     // Test basic polling - client already connected
     // SimpleYuhaClientTransport doesn't expose polling directly,
@@ -20,7 +30,9 @@ async fn test_basic_connection_and_polling() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_clipboard_operations() {
+    let _lock = CLIENT_LOCK.lock().await;
     let mut fixture = TestFixture::new().await.expect("Failed to create fixture");
 
     // Test empty clipboard
@@ -47,10 +59,9 @@ async fn test_clipboard_operations() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_browser_operations() {
-    let client = create_local_client()
-        .await
-        .expect("Failed to create client");
+    let client = get_shared_client().await.expect("Failed to create client");
 
     // Test opening various URLs
     let test_urls = vec![
@@ -69,10 +80,9 @@ async fn test_browser_operations() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_port_forwarding_lifecycle() {
-    let client = create_local_client()
-        .await
-        .expect("Failed to create client");
+    let client = get_shared_client().await.expect("Failed to create client");
 
     // Start port forwarding
     let local_port = shared::get_random_port();
@@ -97,10 +107,9 @@ async fn test_port_forwarding_lifecycle() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_multiple_port_forwards() {
-    let client = create_local_client()
-        .await
-        .expect("Failed to create client");
+    let client = get_shared_client().await.expect("Failed to create client");
 
     // Start multiple port forwards
     let forwards = vec![
@@ -132,10 +141,9 @@ async fn test_multiple_port_forwards() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_concurrent_operations() {
-    let client = create_local_client()
-        .await
-        .expect("Failed to create client");
+    let client = get_shared_client().await.expect("Failed to create client");
 
     // Test that we can perform multiple operations concurrently
     let clipboard_future = client.set_clipboard("Concurrent test".to_string());
@@ -153,10 +161,9 @@ async fn test_concurrent_operations() {
 
 #[tokio::test]
 #[ignore = "Error handling needs to be improved in the server"]
+#[serial]
 async fn test_error_handling() {
-    let client = create_local_client()
-        .await
-        .expect("Failed to create client");
+    let client = get_shared_client().await.expect("Failed to create client");
 
     // Test stopping non-existent port forward
     let result = client.stop_port_forward(65535).await;
@@ -169,10 +176,9 @@ async fn test_error_handling() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_long_polling_behavior() {
-    let client = create_local_client()
-        .await
-        .expect("Failed to create client");
+    let client = get_shared_client().await.expect("Failed to create client");
 
     // Test that client is responsive by doing a quick operation
     let start = std::time::Instant::now();
@@ -191,7 +197,9 @@ async fn test_long_polling_behavior() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_transport_client_interface() {
+    let _lock = CLIENT_LOCK.lock().await;
     let client = create_local_transport_client()
         .await
         .expect("Failed to create transport client");
@@ -216,10 +224,9 @@ async fn test_transport_client_interface() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_session_persistence() {
-    let client = create_local_client()
-        .await
-        .expect("Failed to create client");
+    let client = get_shared_client().await.expect("Failed to create client");
 
     // Set some state
     let content1 = "Session test 1";

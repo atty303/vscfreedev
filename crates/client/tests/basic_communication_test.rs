@@ -2,12 +2,14 @@ mod shared;
 use shared::test_utils::*;
 
 use anyhow::Result;
+use serial_test::serial;
 use shared::docker::RemoteContainer;
 use std::time::Duration;
 use yuha_client::simple_client;
 use yuha_core::protocol::simple::ResponseItem;
 
 #[tokio::test]
+#[serial]
 async fn test_basic_local_communication() -> Result<()> {
     let test_start = std::time::Instant::now();
     println!(
@@ -73,6 +75,7 @@ async fn test_basic_local_communication() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_basic_ssh_communication_with_auto_upload() -> Result<()> {
     docker_test!();
     let test_start = std::time::Instant::now();
@@ -180,6 +183,7 @@ async fn test_basic_ssh_communication_with_auto_upload() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_polling_mechanism() -> Result<()> {
     println!("Testing polling mechanism with local process");
 

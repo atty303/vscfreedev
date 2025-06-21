@@ -2,11 +2,13 @@ mod shared;
 use shared::test_utils::*;
 
 use anyhow::Result;
+use serial_test::serial;
 use shared::docker::RemoteContainer;
 use std::time::Duration;
 use yuha_client::simple_client;
 
 #[tokio::test]
+#[serial]
 async fn test_port_forwarding_local_process() -> Result<()> {
     println!("Testing port forwarding with local process");
 
@@ -49,6 +51,7 @@ async fn test_port_forwarding_local_process() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_port_forwarding_single_with_auto_upload() -> Result<()> {
     docker_test!();
     // Start the Docker container with the SSH server
@@ -93,6 +96,7 @@ async fn test_port_forwarding_single_with_auto_upload() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_port_forwarding_multiple_with_auto_upload() -> Result<()> {
     docker_test!();
     // Start the Docker container with the SSH server
@@ -141,6 +145,7 @@ async fn test_port_forwarding_multiple_with_auto_upload() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_port_forwarding_stop_with_auto_upload() -> Result<()> {
     docker_test!();
     // Start the Docker container with the SSH server
@@ -189,6 +194,7 @@ async fn test_port_forwarding_stop_with_auto_upload() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_port_forwarding_to_echo_service() -> Result<()> {
     docker_test!();
     // Start the Docker container with the SSH server

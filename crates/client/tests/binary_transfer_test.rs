@@ -2,11 +2,13 @@ mod shared;
 use shared::test_utils::*;
 
 use anyhow::Result;
+use serial_test::serial;
 use shared::docker::RemoteContainer;
 use std::time::Duration;
 use yuha_client::simple_client;
 
 #[tokio::test]
+#[serial]
 async fn test_local_process_execution() -> Result<()> {
     println!("Testing local process execution");
 
@@ -44,6 +46,7 @@ async fn test_local_process_execution() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_binary_transfer_and_execution() -> Result<()> {
     docker_test!();
     println!("Testing binary transfer and execution");
