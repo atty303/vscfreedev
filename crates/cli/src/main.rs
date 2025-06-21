@@ -165,7 +165,7 @@ async fn main() -> Result<()> {
             password,
             key_path,
             auto_upload_binary,
-            no_daemon: _,
+            no_daemon,
         } => {
             // Check if profile is specified and override with profile settings
             let (effective_host, effective_port, effective_username, effective_auto_upload) =
@@ -197,9 +197,44 @@ async fn main() -> Result<()> {
                 effective_host, effective_port, effective_username
             );
 
-            // Connect to the remote host via SSH using new transport
-            let client = if effective_auto_upload {
-                simple_client::connect_ssh_with_auto_upload(
+            if *no_daemon {
+                // Direct connection without daemon
+                let client = if effective_auto_upload {
+                    simple_client::connect_ssh_with_auto_upload(
+                        &effective_host,
+                        effective_port,
+                        &effective_username,
+                        password.as_deref(),
+                        key_path.as_deref(),
+                        effective_auto_upload,
+                    )
+                    .await?
+                } else {
+                    simple_client::connect_ssh(
+                        &effective_host,
+                        effective_port,
+                        &effective_username,
+                        password.as_deref(),
+                        key_path.as_deref(),
+                    )
+                    .await?
+                };
+
+                info!("Connected to remote host (direct)");
+
+                // Test clipboard functionality
+                let test_message = "Hello from yuha CLI!";
+                info!("Setting clipboard to: {}", test_message);
+                client.set_clipboard(test_message.to_string()).await?;
+
+                // Get clipboard content
+                let clipboard_content = client.get_clipboard().await?;
+                info!("Retrieved clipboard content: {}", clipboard_content);
+
+                info!("SSH connection test completed successfully");
+            } else {
+                // Use daemon for connection
+                handle_ssh_via_daemon(
                     &effective_host,
                     effective_port,
                     &effective_username,
@@ -207,34 +242,12 @@ async fn main() -> Result<()> {
                     key_path.as_deref(),
                     effective_auto_upload,
                 )
-                .await?
-            } else {
-                simple_client::connect_ssh(
-                    &effective_host,
-                    effective_port,
-                    &effective_username,
-                    password.as_deref(),
-                    key_path.as_deref(),
-                )
-                .await?
-            };
-
-            info!("Connected to remote host");
-
-            // Test clipboard functionality
-            let test_message = "Hello from yuha CLI!";
-            info!("Setting clipboard to: {}", test_message);
-            client.set_clipboard(test_message.to_string()).await?;
-
-            // Get clipboard content
-            let clipboard_content = client.get_clipboard().await?;
-            info!("Retrieved clipboard content: {}", clipboard_content);
-
-            info!("SSH connection test completed successfully");
+                .await?;
+            }
         }
         Commands::Local {
             binary_path,
-            no_daemon: _,
+            no_daemon,
         } => {
             info!("Connecting to local process");
 
@@ -242,25 +255,31 @@ async fn main() -> Result<()> {
                 .as_deref()
                 .or(config.client.default_binary_path.as_deref());
 
-            let client = simple_client::connect_local_process(effective_binary_path).await?;
+            if *no_daemon {
+                // Direct connection without daemon
+                let client = simple_client::connect_local_process(effective_binary_path).await?;
 
-            info!("Connected to local process");
+                info!("Connected to local process (direct)");
 
-            // Test clipboard functionality
-            let test_message = "Hello from local yuha CLI!";
-            info!("Setting clipboard to: {}", test_message);
-            client.set_clipboard(test_message.to_string()).await?;
+                // Test clipboard functionality
+                let test_message = "Hello from local yuha CLI!";
+                info!("Setting clipboard to: {}", test_message);
+                client.set_clipboard(test_message.to_string()).await?;
 
-            // Get clipboard content
-            let clipboard_content = client.get_clipboard().await?;
-            info!("Retrieved clipboard content: {}", clipboard_content);
+                // Get clipboard content
+                let clipboard_content = client.get_clipboard().await?;
+                info!("Retrieved clipboard content: {}", clipboard_content);
 
-            // Test browser functionality
-            let test_url = "https://example.com";
-            info!("Opening browser to: {}", test_url);
-            client.open_browser(test_url.to_string()).await?;
+                // Test browser functionality
+                let test_url = "https://example.com";
+                info!("Opening browser to: {}", test_url);
+                client.open_browser(test_url.to_string()).await?;
 
-            info!("Local connection test completed successfully");
+                info!("Local connection test completed successfully");
+            } else {
+                // Use daemon for connection
+                handle_local_via_daemon(effective_binary_path).await?;
+            }
         }
         Commands::Daemon { action } => {
             handle_daemon_command(action).await?;
@@ -370,6 +389,192 @@ fn describe_profile(profile: &ConnectionProfile) -> String {
     } else {
         "Unknown".to_string()
     }
+}
+
+/// Handle SSH connection via daemon
+async fn handle_ssh_via_daemon(
+    host: &str,
+    port: u16,
+    username: &str,
+    password: Option<&str>,
+    key_path: Option<&std::path::Path>,
+    auto_upload_binary: bool,
+) -> Result<()> {
+    use yuha_client::daemon_client::DaemonClient;
+    use yuha_core::transport::{TransportConfig, TransportType};
+
+    // Ensure daemon is running
+    ensure_daemon_running().await?;
+
+    // Connect to daemon
+    let mut daemon_client = DaemonClient::connect(None).await?;
+
+    // Create transport config for SSH
+    let transport_config = TransportConfig {
+        transport_type: TransportType::Ssh,
+        ssh: Some(yuha_core::transport::SshTransportConfig {
+            host: host.to_string(),
+            port,
+            username: username.to_string(),
+            password: password.map(|p| p.to_string()),
+            key_path: key_path.map(|p| p.to_path_buf()),
+            auto_upload_binary,
+            timeout: 30,
+            keepalive: 60,
+        }),
+        local: None,
+        tcp: None,
+        wsl: None,
+        general: yuha_core::transport::GeneralTransportConfig::default(),
+    };
+
+    // Create or connect to session
+    let session_name = format!("ssh-{}@{}:{}", username, host, port);
+    let (session_id, reused) = daemon_client
+        .connect_session(session_name.clone(), transport_config)
+        .await?;
+
+    if reused {
+        info!("Reusing existing session: {}", session_name);
+    } else {
+        info!("Created new session: {}", session_name);
+    }
+
+    // Create session client
+    let mut session_client =
+        yuha_client::daemon_client::DaemonSessionClient::new(daemon_client, session_id);
+
+    // Test clipboard functionality
+    let test_message = "Hello from yuha CLI via daemon!";
+    info!("Setting clipboard to: {}", test_message);
+    session_client
+        .set_clipboard(test_message.to_string())
+        .await?;
+
+    // Get clipboard content
+    let clipboard_content = session_client.get_clipboard().await?;
+    info!("Retrieved clipboard content: {}", clipboard_content);
+
+    info!("SSH connection test completed successfully via daemon");
+    Ok(())
+}
+
+/// Handle local connection via daemon
+async fn handle_local_via_daemon(binary_path: Option<&std::path::Path>) -> Result<()> {
+    use yuha_client::daemon_client::DaemonClient;
+    use yuha_core::transport::{TransportConfig, TransportType};
+
+    // Ensure daemon is running
+    ensure_daemon_running().await?;
+
+    // Connect to daemon
+    let mut daemon_client = DaemonClient::connect(None).await?;
+
+    // Create transport config for local
+    let effective_binary_path = binary_path
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("yuha-remote"));
+
+    let transport_config = TransportConfig {
+        transport_type: TransportType::Local,
+        ssh: None,
+        local: Some(yuha_core::transport::LocalTransportConfig {
+            binary_path: effective_binary_path,
+            args: vec!["--stdio".to_string()],
+            working_dir: None,
+        }),
+        tcp: None,
+        wsl: None,
+        general: yuha_core::transport::GeneralTransportConfig::default(),
+    };
+
+    // Create or connect to session
+    let session_name = "local".to_string();
+    let (session_id, reused) = daemon_client
+        .connect_session(session_name.clone(), transport_config)
+        .await?;
+
+    if reused {
+        info!("Reusing existing session: {}", session_name);
+    } else {
+        info!("Created new session: {}", session_name);
+    }
+
+    // Create session client
+    let mut session_client =
+        yuha_client::daemon_client::DaemonSessionClient::new(daemon_client, session_id);
+
+    // Test clipboard functionality
+    let test_message = "Hello from local yuha CLI via daemon!";
+    info!("Setting clipboard to: {}", test_message);
+    session_client
+        .set_clipboard(test_message.to_string())
+        .await?;
+
+    // Get clipboard content
+    let clipboard_content = session_client.get_clipboard().await?;
+    info!("Retrieved clipboard content: {}", clipboard_content);
+
+    // Test browser functionality
+    let test_url = "https://example.com";
+    info!("Opening browser to: {}", test_url);
+    session_client.open_browser(test_url.to_string()).await?;
+
+    info!("Local connection test completed successfully via daemon");
+    Ok(())
+}
+
+/// Ensure daemon is running, start it if needed
+async fn ensure_daemon_running() -> Result<()> {
+    use yuha_client::daemon_client::DaemonClient;
+
+    // Try to connect to existing daemon
+    match DaemonClient::connect(None).await {
+        Ok(mut client) => {
+            if client.ping().await? {
+                debug!("Daemon is already running");
+                return Ok(());
+            }
+        }
+        Err(_) => {
+            // Daemon is not running
+        }
+    }
+
+    // Start daemon in background
+    info!("Starting daemon in background...");
+    let exe = std::env::current_exe()?;
+    let mut cmd = std::process::Command::new(exe);
+
+    cmd.arg("daemon").arg("start").arg("--foreground");
+
+    // Daemonize
+    cmd.stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null());
+
+    cmd.spawn()?;
+
+    // Wait a bit for daemon to start
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    // Verify daemon is running
+    for _ in 0..10 {
+        match DaemonClient::connect(None).await {
+            Ok(mut client) => {
+                if client.ping().await? {
+                    info!("Daemon started successfully");
+                    return Ok(());
+                }
+            }
+            Err(_) => {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                continue;
+            }
+        }
+    }
+
+    Err(anyhow::anyhow!("Failed to start daemon"))
 }
 
 /// Handle daemon subcommands
