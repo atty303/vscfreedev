@@ -1,8 +1,9 @@
 use anyhow::Result;
 use bytes::Bytes;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::io::Write;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -13,6 +14,7 @@ use tracing::{error, info, warn};
 use yuha_core::message_channel::MessageChannel;
 use yuha_core::protocol::{ResponseBuffer, YuhaRequest, YuhaResponse};
 use yuha_core::{browser, clipboard};
+use yuha_remote::ipc::{IpcClient, IpcCommand, IpcResponse, get_default_ipc_socket_path};
 
 /// A stream that combines stdin and stdout for bidirectional communication
 pub struct StdioStream {
@@ -72,6 +74,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
         }
     }
 
+    pub fn get_response_buffer(&self) -> Arc<RwLock<ResponseBuffer>> {
+        self.response_buffer.clone()
+    }
+
     /// Run the server main loop
     pub async fn run(&mut self) -> Result<()> {
         info!("Remote server starting with simple request-response protocol");
@@ -89,6 +95,52 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
                 Err(e) => {
                     error!("Error receiving request: {}", e);
                     break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Run the server with IPC support
+    pub async fn run_with_ipc(&mut self, _ipc_sender: mpsc::UnboundedSender<String>) -> Result<()> {
+        info!("Remote server starting with simple request-response protocol and IPC");
+
+        // Channel to receive messages from IPC
+        let (_tx, mut _rx) = mpsc::unbounded_channel::<String>();
+
+        // Start IPC message handler
+        let response_buffer = self.response_buffer.clone();
+        tokio::spawn(async move {
+            while let Some(message) = _rx.recv().await {
+                info!("Received IPC message: {}", message);
+                let mut buffer = response_buffer.write().await;
+                buffer.add_clipboard_content(format!("IPC: {}", message));
+            }
+        });
+
+        loop {
+            tokio::select! {
+                // Handle client requests
+                request_result = self.message_channel.receive_request() => {
+                    match request_result {
+                        Ok(request) => {
+                            let response = self.handle_request(request).await;
+
+                            if let Err(e) = self.message_channel.send_response(&response).await {
+                                error!("Failed to send response: {}", e);
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            error!("Error receiving request: {}", e);
+                            break;
+                        }
+                    }
+                }
+                // Handle IPC messages (currently just logged)
+                _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
+                    // Periodic check - could be used for other maintenance tasks
                 }
             }
         }
@@ -414,6 +466,39 @@ struct Args {
     /// Use standard I/O instead of TCP
     #[arg(short, long)]
     stdio: bool,
+
+    /// IPC socket path
+    #[arg(long)]
+    ipc_socket: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+/// Shell commands that can be executed directly
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Get clipboard content
+    GetClipboard,
+    /// Set clipboard content
+    SetClipboard {
+        /// Content to set
+        content: String,
+    },
+    /// Open URL in browser
+    OpenBrowser {
+        /// URL to open
+        url: String,
+    },
+    /// Send message to connected client
+    SendToClient {
+        /// Message to send
+        message: String,
+    },
+    /// Get status of remote process
+    Status,
+    /// Ping the remote process
+    Ping,
 }
 
 #[tokio::main]
@@ -462,24 +547,110 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
+    // Check if this is a shell command execution
+    if let Some(command) = args.command {
+        return handle_shell_command(command, args.ipc_socket).await;
+    }
+
+    // Start transport server mode (called by client)
+    let ipc_socket_path = args.ipc_socket.unwrap_or_else(get_default_ipc_socket_path);
+
     if args.stdio {
-        info!("Starting yuha remote server using standard I/O with simple protocol");
+        info!("Starting yuha remote server using standard I/O with simple protocol and IPC");
         let stdin = tokio::io::stdin();
         let stdout = tokio::io::stdout();
         let stdio_stream = StdioStream::new(stdin, stdout);
         let message_channel = MessageChannel::new_with_stream(stdio_stream);
         let mut server = RemoteServer::new(message_channel);
-        server.run().await?;
+
+        // Start IPC server in background with client communication
+        let response_buffer = server.get_response_buffer();
+        let (ipc_tx, _ipc_rx) = mpsc::unbounded_channel::<String>();
+        let mut ipc_server =
+            yuha_remote::ipc::IpcServer::new(ipc_socket_path.clone(), response_buffer);
+        ipc_server.set_client_sender(ipc_tx.clone());
+
+        tokio::spawn(async move {
+            if let Err(e) = ipc_server.start().await {
+                error!("IPC server error: {}", e);
+            }
+        });
+
+        server.run_with_ipc(ipc_tx).await?;
     } else {
         info!(
-            "Starting yuha remote server using TCP on port {} with simple protocol",
+            "Starting yuha remote server using TCP on port {} with simple protocol and IPC",
             args.port
         );
         let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
         let (stream, _) = listener.accept().await?;
         let message_channel = MessageChannel::new(stream);
         let mut server = RemoteServer::new(message_channel);
-        server.run().await?;
+
+        // Start IPC server in background with client communication
+        let response_buffer = server.get_response_buffer();
+        let (ipc_tx, _ipc_rx) = mpsc::unbounded_channel::<String>();
+        let mut ipc_server =
+            yuha_remote::ipc::IpcServer::new(ipc_socket_path.clone(), response_buffer);
+        ipc_server.set_client_sender(ipc_tx.clone());
+
+        tokio::spawn(async move {
+            if let Err(e) = ipc_server.start().await {
+                error!("IPC server error: {}", e);
+            }
+        });
+
+        server.run_with_ipc(ipc_tx).await?;
+    }
+
+    Ok(())
+}
+
+/// Handle shell command execution
+async fn handle_shell_command(command: Commands, ipc_socket: Option<PathBuf>) -> Result<()> {
+    let socket_path = ipc_socket.unwrap_or_else(get_default_ipc_socket_path);
+    let client = IpcClient::new(socket_path);
+
+    let ipc_command = match command {
+        Commands::GetClipboard => IpcCommand::GetClipboard,
+        Commands::SetClipboard { content } => IpcCommand::SetClipboard { content },
+        Commands::OpenBrowser { url } => IpcCommand::OpenBrowser { url },
+        Commands::SendToClient { message } => IpcCommand::SendToClient { message },
+        Commands::Status => IpcCommand::Status,
+        Commands::Ping => IpcCommand::Ping,
+    };
+
+    match client.send_command(ipc_command).await {
+        Ok(response) => match response {
+            IpcResponse::Success { data } => {
+                if let Some(data) = data {
+                    println!("{}", data);
+                } else {
+                    println!("Success");
+                }
+            }
+            IpcResponse::Error { message } => {
+                eprintln!("Error: {}", message);
+                std::process::exit(1);
+            }
+            IpcResponse::Status {
+                uptime,
+                connected_clients,
+                active_port_forwards,
+            } => {
+                println!("Remote process status:");
+                println!("  Uptime: {} seconds", uptime);
+                println!("  Connected clients: {}", connected_clients);
+                println!("  Active port forwards: {}", active_port_forwards);
+            }
+            IpcResponse::Pong => {
+                println!("Pong");
+            }
+        },
+        Err(e) => {
+            eprintln!("Failed to communicate with remote process: {}", e);
+            std::process::exit(1);
+        }
     }
 
     Ok(())
