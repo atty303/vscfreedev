@@ -4,7 +4,7 @@ use tokio::net::TcpStream;
 use tracing::{debug, warn};
 
 use crate::error::{ProtocolError as ChannelError, Result};
-use crate::protocol::{YuhaRequest, YuhaResponse};
+use crate::protocol::{ProtocolRequest, ProtocolResponse};
 
 /// A simple message for direct client-remote communication
 #[derive(Debug, Clone)]
@@ -43,7 +43,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
     }
 
     /// Send a request over the channel
-    pub async fn send_request(&mut self, request: &YuhaRequest) -> Result<()> {
+    pub async fn send_request(&mut self, request: &ProtocolRequest) -> Result<()> {
         debug!("Sending request: {:?}", request);
 
         let json_data = serde_json::to_vec(request).map_err(|e| {
@@ -59,7 +59,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
     }
 
     /// Send a response over the channel
-    pub async fn send_response(&mut self, response: &YuhaResponse) -> Result<()> {
+    pub async fn send_response(&mut self, response: &ProtocolResponse) -> Result<()> {
         debug!("Sending response: {:?}", response);
 
         let json_data = serde_json::to_vec(response).map_err(|e| {
@@ -75,7 +75,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
     }
 
     /// Receive a request from the channel
-    pub async fn receive_request(&mut self) -> Result<YuhaRequest> {
+    pub async fn receive_request(&mut self) -> Result<ProtocolRequest> {
         debug!("Waiting for request...");
 
         let payload = self.receive().await?;
@@ -93,7 +93,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> MessageChannel<T> {
     }
 
     /// Receive a response from the channel
-    pub async fn receive_response(&mut self) -> Result<YuhaResponse> {
+    pub async fn receive_response(&mut self) -> Result<ProtocolResponse> {
         debug!("Waiting for response...");
 
         let payload = self.receive().await?;

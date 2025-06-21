@@ -32,10 +32,10 @@
 //! ## Usage Example
 //!
 //! ```rust,no_run
-//! use yuha_core::protocol::{Protocol, YuhaRequest};
+//! use yuha_core::protocol::{Protocol, ProtocolRequest};
 //!
 //! // Send a request through any protocol implementation
-//! let response = protocol.send_request(YuhaRequest::GetClipboard).await?;
+//! let response = protocol.send_request(ProtocolRequest::GetClipboard).await?;
 //! ```
 
 use async_trait::async_trait;
@@ -57,7 +57,7 @@ pub use implementation::{
 };
 
 // Re-export main protocol types for convenient access
-pub use simple::{ResponseBuffer, ResponseItem, YuhaRequest, YuhaResponse};
+pub use simple::{ProtocolRequest, ProtocolResponse, ResponseBuffer, ResponseItem};
 
 /// Common trait for all protocol messages
 pub trait Message: Serialize + DeserializeOwned + Debug + Clone + Send + Sync {}

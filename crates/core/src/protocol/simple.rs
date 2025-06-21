@@ -24,33 +24,33 @@
 //! ## Usage Example
 //!
 //! ```rust,no_run
-//! use yuha_core::protocol::{YuhaRequest, YuhaResponse};
+//! use yuha_core::protocol::{ProtocolRequest, ProtocolResponse};
 //!
 //! // Create a clipboard request
-//! let request = YuhaRequest::GetClipboard;
+//! let request = ProtocolRequest::GetClipboard;
 //!
 //! // Send via protocol implementation
 //! let response = protocol.send_request(request).await?;
 //!
 //! match response {
-//!     YuhaResponse::Data { items } => {
+//!     ProtocolResponse::Data { items } => {
 //!         // Process clipboard data
 //!     }
-//!     YuhaResponse::Error { message } => {
+//!     ProtocolResponse::Error { message } => {
 //!         // Handle error
 //!     }
 //!     _ => {}
 //! }
 //! ```
 
-use super::{Message, Request, Response};
+use super::Message;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Protocol request types
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum YuhaRequest {
+pub enum ProtocolRequest {
     PollData,
     StartPortForward {
         local_port: u16,
@@ -75,7 +75,7 @@ pub enum YuhaRequest {
 
 /// Protocol response types
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum YuhaResponse {
+pub enum ProtocolResponse {
     Data { items: Vec<ResponseItem> },
     Success,
     Error { message: String },
@@ -90,11 +90,11 @@ pub enum ResponseItem {
     ClipboardContent { content: String },
 }
 
-impl Message for YuhaRequest {}
-impl Request for YuhaRequest {}
+impl Message for ProtocolRequest {}
+impl super::Request for ProtocolRequest {}
 
-impl Message for YuhaResponse {}
-impl Response for YuhaResponse {}
+impl Message for ProtocolResponse {}
+impl super::Response for ProtocolResponse {}
 
 impl Message for ResponseItem {}
 

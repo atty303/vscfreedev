@@ -44,7 +44,7 @@ pub mod transport;
 pub mod transport_factory;
 
 // Re-export main client type for convenience
-pub use simple_client_transport::YuhaClient;
+pub use simple_client_transport::Client;
 
 /// Path to the remote binary built by build.rs.
 ///

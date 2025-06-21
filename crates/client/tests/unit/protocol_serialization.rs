@@ -1,13 +1,13 @@
 use anyhow::Result;
 use serde_json;
 use serial_test::serial;
-use yuha_core::protocol::{ResponseItem, YuhaRequest, YuhaResponse};
+use yuha_core::protocol::{ProtocolRequest, ProtocolResponse, ResponseItem};
 
 #[tokio::test]
 #[serial]
 async fn test_protocol_message_serialization() -> Result<()> {
     // Test basic message serialization
-    let start_request = YuhaRequest::StartPortForward {
+    let start_request = ProtocolRequest::StartPortForward {
         local_port: 8080,
         remote_host: "localhost".to_string(),
         remote_port: 80,
@@ -16,9 +16,9 @@ async fn test_protocol_message_serialization() -> Result<()> {
     let json = serde_json::to_string(&start_request)?;
     println!("StartPortForward JSON: {}", json);
 
-    let parsed: YuhaRequest = serde_json::from_str(&json)?;
+    let parsed: ProtocolRequest = serde_json::from_str(&json)?;
     match parsed {
-        YuhaRequest::StartPortForward {
+        ProtocolRequest::StartPortForward {
             local_port,
             remote_host,
             remote_port,
@@ -39,29 +39,29 @@ async fn test_protocol_message_serialization() -> Result<()> {
 async fn test_all_request_types_serialization() -> Result<()> {
     // Test all request types
     let requests = vec![
-        YuhaRequest::PollData,
-        YuhaRequest::StartPortForward {
+        ProtocolRequest::PollData,
+        ProtocolRequest::StartPortForward {
             local_port: 8080,
             remote_host: "example.com".to_string(),
             remote_port: 443,
         },
-        YuhaRequest::StopPortForward { local_port: 8080 },
-        YuhaRequest::PortForwardData {
+        ProtocolRequest::StopPortForward { local_port: 8080 },
+        ProtocolRequest::PortForwardData {
             connection_id: 123,
             data: bytes::Bytes::from(vec![1, 2, 3, 4, 5]),
         },
-        YuhaRequest::GetClipboard,
-        YuhaRequest::SetClipboard {
+        ProtocolRequest::GetClipboard,
+        ProtocolRequest::SetClipboard {
             content: "test clipboard".to_string(),
         },
-        YuhaRequest::OpenBrowser {
+        ProtocolRequest::OpenBrowser {
             url: "https://example.com".to_string(),
         },
     ];
 
     for request in requests {
         let json = serde_json::to_string(&request)?;
-        let parsed: YuhaRequest = serde_json::from_str(&json)?;
+        let parsed: ProtocolRequest = serde_json::from_str(&json)?;
 
         // Verify round-trip serialization
         let json2 = serde_json::to_string(&parsed)?;
@@ -77,11 +77,11 @@ async fn test_all_request_types_serialization() -> Result<()> {
 async fn test_response_types_serialization() -> Result<()> {
     // Test all response types
     let responses = vec![
-        YuhaResponse::Success,
-        YuhaResponse::Error {
+        ProtocolResponse::Success,
+        ProtocolResponse::Error {
             message: "Test error".to_string(),
         },
-        YuhaResponse::Data {
+        ProtocolResponse::Data {
             items: vec![
                 ResponseItem::ClipboardContent {
                     content: "clipboard data".to_string(),
@@ -101,7 +101,7 @@ async fn test_response_types_serialization() -> Result<()> {
 
     for response in responses {
         let json = serde_json::to_string(&response)?;
-        let parsed: YuhaResponse = serde_json::from_str(&json)?;
+        let parsed: ProtocolResponse = serde_json::from_str(&json)?;
 
         // Verify round-trip serialization
         let json2 = serde_json::to_string(&parsed)?;

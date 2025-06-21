@@ -2,8 +2,8 @@
 
 use std::path::PathBuf;
 use yuha_client::transport::{LocalTransport, LocalTransportConfig, TransportConfig};
-use yuha_client::{YuhaClient, simple_client_transport::connect_local};
-use yuha_core::protocol::YuhaResponse;
+use yuha_client::{Client, simple_client_transport::connect_local};
+use yuha_core::protocol::ProtocolResponse;
 
 /// Test categories for filtering
 #[derive(Debug, Clone, Copy)]
@@ -31,14 +31,14 @@ pub fn create_local_transport(transport_config: Option<TransportConfig>) -> Loca
 }
 
 /// Create and connect a local client for testing
-pub async fn create_local_client() -> anyhow::Result<YuhaClient<LocalTransport>> {
+pub async fn create_local_client() -> anyhow::Result<Client<LocalTransport>> {
     connect_local(get_remote_binary_path(), TransportConfig::default())
         .await
         .map_err(|e| anyhow::anyhow!(e))
 }
 
 /// Create and connect a local transport client for testing (alias for compatibility)
-pub async fn create_local_transport_client() -> anyhow::Result<YuhaClient<LocalTransport>> {
+pub async fn create_local_transport_client() -> anyhow::Result<Client<LocalTransport>> {
     create_local_client().await
 }
 
@@ -46,47 +46,49 @@ pub async fn create_local_transport_client() -> anyhow::Result<YuhaClient<LocalT
 macro_rules! assert_response {
     (success, $response:expr) => {
         match $response {
-            YuhaResponse::Success => {}
-            YuhaResponse::Error { message } => panic!("Expected success, got error: {}", message),
-            YuhaResponse::Data { .. } => panic!("Expected success, got data response"),
+            ProtocolResponse::Success => {}
+            ProtocolResponse::Error { message } => {
+                panic!("Expected success, got error: {}", message)
+            }
+            ProtocolResponse::Data { .. } => panic!("Expected success, got data response"),
         }
     };
     (data, $response:expr) => {
         match $response {
-            YuhaResponse::Data { items } => items,
-            YuhaResponse::Success => panic!("Expected data response, got success"),
-            YuhaResponse::Error { message } => {
+            ProtocolResponse::Data { items } => items,
+            ProtocolResponse::Success => panic!("Expected data response, got success"),
+            ProtocolResponse::Error { message } => {
                 panic!("Expected data response, got error: {}", message)
             }
         }
     };
     (error, $response:expr) => {
         match $response {
-            YuhaResponse::Error { message } => message,
-            YuhaResponse::Success => panic!("Expected error, got success"),
-            YuhaResponse::Data { .. } => panic!("Expected error, got data response"),
+            ProtocolResponse::Error { message } => message,
+            ProtocolResponse::Success => panic!("Expected error, got success"),
+            ProtocolResponse::Data { .. } => panic!("Expected error, got data response"),
         }
     };
 }
 
 /// Assert that a response is successful
-pub fn assert_success(response: &YuhaResponse) {
+pub fn assert_success(response: &ProtocolResponse) {
     assert_response!(success, response);
 }
 
 /// Assert that a response contains data
-pub fn assert_data(response: &YuhaResponse) -> &[yuha_core::protocol::ResponseItem] {
+pub fn assert_data(response: &ProtocolResponse) -> &[yuha_core::protocol::ResponseItem] {
     assert_response!(data, response)
 }
 
 /// Assert that a response is an error
-pub fn assert_error(response: &YuhaResponse) -> &str {
+pub fn assert_error(response: &ProtocolResponse) -> &str {
     assert_response!(error, response)
 }
 
 /// Test fixture for common test scenarios
 pub struct TestFixture {
-    pub client: YuhaClient<LocalTransport>,
+    pub client: Client<LocalTransport>,
 }
 
 impl TestFixture {

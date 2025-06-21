@@ -87,8 +87,8 @@ where
 /// Type aliases for specific protocol implementations
 pub type SimpleProtocol<T> = GenericProtocol<
     T,
-    super::simple::YuhaRequest,
-    super::simple::YuhaResponse,
+    super::simple::ProtocolRequest,
+    super::simple::ProtocolResponse,
     super::codec::JsonCodec,
 >;
 pub type DaemonProtocol<T> = GenericProtocol<
