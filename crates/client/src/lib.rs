@@ -1,5 +1,6 @@
 //! Client-side library for yuha
 
+pub mod constants;
 pub mod daemon;
 pub mod daemon_client;
 pub mod daemon_protocol;

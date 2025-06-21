@@ -3,6 +3,7 @@
 //! This module provides a client interface for sending requests to
 //! the yuha daemon and receiving responses.
 
+use crate::constants::default_socket_path;
 use crate::daemon_protocol::{
     DaemonCommand, DaemonRequest, DaemonResponse, SessionDetails, SessionSummary,
 };
@@ -28,15 +29,33 @@ pub struct DaemonClient {
 }
 
 impl DaemonClient {
+    /// Helper function to handle daemon responses with a specific success type
+    fn handle_daemon_response<T, F>(
+        response: DaemonResponse,
+        success_handler: F,
+    ) -> Result<T, ClientError>
+    where
+        F: FnOnce(DaemonResponse) -> Option<T>,
+    {
+        match response {
+            DaemonResponse::Error { code, message } => {
+                Err(ClientError::DaemonError { code, message })
+            }
+            response => {
+                if let Some(result) = success_handler(response) {
+                    Ok(result)
+                } else {
+                    Err(ClientError::Channel(
+                        "Unexpected response from daemon".to_string(),
+                    ))
+                }
+            }
+        }
+    }
+
     /// Connect to the daemon
     pub async fn connect(socket_path: Option<PathBuf>) -> Result<Self, ClientError> {
-        let socket_path = socket_path.unwrap_or_else(|| {
-            if cfg!(unix) {
-                PathBuf::from("/tmp/yuha-daemon.sock")
-            } else {
-                PathBuf::from(r"\\.\pipe\yuha-daemon")
-            }
-        });
+        let socket_path = socket_path.unwrap_or_else(default_socket_path);
 
         info!("Connecting to daemon at {:?}", socket_path);
 
@@ -126,15 +145,14 @@ impl DaemonClient {
             description,
         };
 
-        match self.send_request(request).await? {
-            DaemonResponse::SessionCreated { session_id, reused } => Ok((session_id, reused)),
-            DaemonResponse::Error { code, message } => {
-                Err(ClientError::DaemonError { code, message })
+        let response = self.send_request(request).await?;
+        Self::handle_daemon_response(response, |resp| {
+            if let DaemonResponse::SessionCreated { session_id, reused } = resp {
+                Some((session_id, reused))
+            } else {
+                None
             }
-            _ => Err(ClientError::Channel(
-                "Unexpected response from daemon".to_string(),
-            )),
-        }
+        })
     }
 
     /// Connect to an existing session or create a new one
@@ -148,43 +166,40 @@ impl DaemonClient {
             transport_config,
         };
 
-        match self.send_request(request).await? {
-            DaemonResponse::SessionCreated { session_id, reused } => Ok((session_id, reused)),
-            DaemonResponse::Error { code, message } => {
-                Err(ClientError::DaemonError { code, message })
+        let response = self.send_request(request).await?;
+        Self::handle_daemon_response(response, |resp| {
+            if let DaemonResponse::SessionCreated { session_id, reused } = resp {
+                Some((session_id, reused))
+            } else {
+                None
             }
-            _ => Err(ClientError::Channel(
-                "Unexpected response from daemon".to_string(),
-            )),
-        }
+        })
     }
 
     /// Disconnect from a session
     pub async fn disconnect_session(&mut self, session_id: SessionId) -> Result<(), ClientError> {
         let request = DaemonRequest::DisconnectSession { session_id };
 
-        match self.send_request(request).await? {
-            DaemonResponse::SessionDisconnected => Ok(()),
-            DaemonResponse::Error { code, message } => {
-                Err(ClientError::DaemonError { code, message })
+        let response = self.send_request(request).await?;
+        Self::handle_daemon_response(response, |resp| {
+            if let DaemonResponse::SessionDisconnected = resp {
+                Some(())
+            } else {
+                None
             }
-            _ => Err(ClientError::Channel(
-                "Unexpected response from daemon".to_string(),
-            )),
-        }
+        })
     }
 
     /// List all sessions
     pub async fn list_sessions(&mut self) -> Result<Vec<SessionSummary>, ClientError> {
-        match self.send_request(DaemonRequest::ListSessions).await? {
-            DaemonResponse::SessionList { sessions } => Ok(sessions),
-            DaemonResponse::Error { code, message } => {
-                Err(ClientError::DaemonError { code, message })
+        let response = self.send_request(DaemonRequest::ListSessions).await?;
+        Self::handle_daemon_response(response, |resp| {
+            if let DaemonResponse::SessionList { sessions } = resp {
+                Some(sessions)
+            } else {
+                None
             }
-            _ => Err(ClientError::Channel(
-                "Unexpected response from daemon".to_string(),
-            )),
-        }
+        })
     }
 
     /// Get session information
@@ -194,15 +209,14 @@ impl DaemonClient {
     ) -> Result<SessionDetails, ClientError> {
         let request = DaemonRequest::GetSessionInfo { session_id };
 
-        match self.send_request(request).await? {
-            DaemonResponse::SessionInfo { session } => Ok(*session),
-            DaemonResponse::Error { code, message } => {
-                Err(ClientError::DaemonError { code, message })
+        let response = self.send_request(request).await?;
+        Self::handle_daemon_response(response, |resp| {
+            if let DaemonResponse::SessionInfo { session } = resp {
+                Some(*session)
+            } else {
+                None
             }
-            _ => Err(ClientError::Channel(
-                "Unexpected response from daemon".to_string(),
-            )),
-        }
+        })
     }
 
     /// Execute a command on a session

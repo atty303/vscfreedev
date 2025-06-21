@@ -2,16 +2,14 @@
 //!
 //! This module provides a transport that runs yuha-remote in Windows Subsystem for Linux (WSL).
 
+use super::shared::{ProcessStream, configure_command, spawn_stderr_logger};
 use super::{Transport, TransportConfig};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::process::Stdio;
-use std::task::{Context as TaskContext, Poll};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tracing::{debug, info, warn};
+use tokio::process::Command;
+use tracing::{debug, info};
 
 /// WSL transport configuration
 #[derive(Debug, Clone)]
@@ -136,7 +134,7 @@ impl WslTransport {
 
 #[async_trait]
 impl Transport for WslTransport {
-    type Stream = WslProcessStream;
+    type Stream = ProcessStream;
 
     async fn connect(&self) -> Result<Self::Stream> {
         if !cfg!(windows) {
@@ -157,10 +155,12 @@ impl Transport for WslTransport {
 
         let mut cmd = self.build_command();
 
-        // Set environment variables
-        for (key, value) in &self.transport_config.env_vars {
-            cmd.env(key, value);
-        }
+        // Configure common command options
+        configure_command(
+            &mut cmd,
+            &self.transport_config.env_vars,
+            &self.transport_config.working_dir,
+        );
 
         // Configure stdio
         cmd.stdin(Stdio::piped())
@@ -191,81 +191,20 @@ impl Transport for WslTransport {
 
         // Spawn a task to log stderr output
         if let Some(stderr) = stderr {
-            let distribution = self
-                .config
-                .distribution
-                .clone()
-                .unwrap_or_else(|| "default".to_string());
-            tokio::spawn(async move {
-                use tokio::io::AsyncBufReadExt;
-                let reader = tokio::io::BufReader::new(stderr);
-                let mut lines = reader.lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    debug!("yuha-remote WSL({}) stderr: {}", distribution, line);
-                }
-            });
+            let prefix = format!(
+                "yuha-remote WSL({})",
+                self.config.distribution.as_deref().unwrap_or("default")
+            );
+            spawn_stderr_logger(stderr, &prefix);
         }
 
         info!("WSL yuha-remote process started successfully");
 
-        Ok(WslProcessStream {
-            child: Some(child),
-            stdin,
-            stdout,
-        })
+        Ok(ProcessStream::new(child, stdin, stdout))
     }
 
     fn name(&self) -> &'static str {
         "wsl"
-    }
-}
-
-/// Stream adapter for WSL process communication
-pub struct WslProcessStream {
-    child: Option<Child>,
-    stdin: ChildStdin,
-    stdout: ChildStdout,
-}
-
-impl Drop for WslProcessStream {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            // Try to kill the child process
-            if let Err(e) = child.start_kill() {
-                warn!("Failed to kill WSL child process: {}", e);
-            }
-        }
-    }
-}
-
-impl AsyncRead for WslProcessStream {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.stdout).poll_read(cx, buf)
-    }
-}
-
-impl AsyncWrite for WslProcessStream {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.stdin).poll_write(cx, buf)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.stdin).poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.stdin).poll_shutdown(cx)
     }
 }
 

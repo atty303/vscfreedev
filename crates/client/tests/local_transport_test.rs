@@ -60,7 +60,7 @@ async fn test_local_transport_with_env_vars() {
     let mut transport_config = TransportConfig::default();
     transport_config
         .env_vars
-        .push(("YUHA_TEST".to_string(), "local_transport".to_string()));
+        .insert("YUHA_TEST".to_string(), "local_transport".to_string());
 
     // Create local transport
     let local_config = LocalTransportConfig {

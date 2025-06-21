@@ -5,10 +5,12 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 pub mod local;
+pub mod shared;
 pub mod ssh;
 pub mod tcp;
 pub mod wsl;
@@ -36,7 +38,7 @@ pub struct TransportConfig {
     /// Whether to auto-upload the binary
     pub auto_upload_binary: bool,
     /// Additional environment variables for the remote process
-    pub env_vars: Vec<(String, String)>,
+    pub env_vars: HashMap<String, String>,
     /// Working directory for the remote process
     pub working_dir: Option<PathBuf>,
 }

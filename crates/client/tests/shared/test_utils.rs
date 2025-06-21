@@ -21,65 +21,68 @@ pub fn get_remote_binary_path() -> PathBuf {
     PathBuf::from(yuha_client::client::get_remote_binary_path())
 }
 
-/// Create a local transport for testing
-pub fn create_local_transport() -> LocalTransport {
+/// Create a local transport with optional custom configuration
+pub fn create_local_transport(transport_config: Option<TransportConfig>) -> LocalTransport {
     let local_config = LocalTransportConfig {
         binary_path: get_remote_binary_path(),
         args: vec!["--stdio".to_string()],
     };
-    LocalTransport::new(local_config, TransportConfig::default())
-}
-
-/// Create a local transport with custom configuration
-pub fn create_local_transport_with_config(transport_config: TransportConfig) -> LocalTransport {
-    let local_config = LocalTransportConfig {
-        binary_path: get_remote_binary_path(),
-        args: vec!["--stdio".to_string()],
-    };
-    LocalTransport::new(local_config, transport_config)
+    LocalTransport::new(local_config, transport_config.unwrap_or_default())
 }
 
 /// Create and connect a local client for testing
 pub async fn create_local_client() -> anyhow::Result<SimpleYuhaClientTransport<LocalTransport>> {
-    let transport = create_local_transport();
-    let mut client = SimpleYuhaClientTransport::new(transport);
-    client.connect().await?;
-    Ok(client)
-}
-
-/// Create and connect a local transport client for testing
-pub async fn create_local_transport_client()
--> anyhow::Result<SimpleYuhaClientTransport<LocalTransport>> {
     connect_local(get_remote_binary_path(), TransportConfig::default())
         .await
         .map_err(|e| anyhow::anyhow!(e))
 }
 
+/// Create and connect a local transport client for testing (alias for compatibility)
+pub async fn create_local_transport_client()
+-> anyhow::Result<SimpleYuhaClientTransport<LocalTransport>> {
+    create_local_client().await
+}
+
+/// Helper macro for asserting response types
+macro_rules! assert_response {
+    (success, $response:expr) => {
+        match $response {
+            YuhaResponse::Success => {}
+            YuhaResponse::Error { message } => panic!("Expected success, got error: {}", message),
+            YuhaResponse::Data { .. } => panic!("Expected success, got data response"),
+        }
+    };
+    (data, $response:expr) => {
+        match $response {
+            YuhaResponse::Data { items } => items,
+            YuhaResponse::Success => panic!("Expected data response, got success"),
+            YuhaResponse::Error { message } => {
+                panic!("Expected data response, got error: {}", message)
+            }
+        }
+    };
+    (error, $response:expr) => {
+        match $response {
+            YuhaResponse::Error { message } => message,
+            YuhaResponse::Success => panic!("Expected error, got success"),
+            YuhaResponse::Data { .. } => panic!("Expected error, got data response"),
+        }
+    };
+}
+
 /// Assert that a response is successful
 pub fn assert_success(response: &YuhaResponse) {
-    match response {
-        YuhaResponse::Success => {}
-        YuhaResponse::Error { message } => panic!("Expected success, got error: {}", message),
-        YuhaResponse::Data { .. } => panic!("Expected success, got data response"),
-    }
+    assert_response!(success, response);
 }
 
 /// Assert that a response contains data
 pub fn assert_data(response: &YuhaResponse) -> &[yuha_core::protocol::ResponseItem] {
-    match response {
-        YuhaResponse::Data { items } => items,
-        YuhaResponse::Success => panic!("Expected data response, got success"),
-        YuhaResponse::Error { message } => panic!("Expected data response, got error: {}", message),
-    }
+    assert_response!(data, response)
 }
 
 /// Assert that a response is an error
 pub fn assert_error(response: &YuhaResponse) -> &str {
-    match response {
-        YuhaResponse::Error { message } => message,
-        YuhaResponse::Success => panic!("Expected error, got success"),
-        YuhaResponse::Data { .. } => panic!("Expected error, got data response"),
-    }
+    assert_response!(error, response)
 }
 
 /// Test fixture for common test scenarios

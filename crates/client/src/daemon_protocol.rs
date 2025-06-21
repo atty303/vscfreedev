@@ -219,11 +219,7 @@ pub struct DaemonConfig {
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
-            socket_path: if cfg!(unix) {
-                "/tmp/yuha-daemon.sock".to_string()
-            } else {
-                "\\\\.\\pipe\\yuha-daemon".to_string()
-            },
+            socket_path: crate::constants::default_socket_path_str(),
             max_clients: 10,
             enable_session_pooling: true,
             session_idle_timeout: 300, // 5 minutes
