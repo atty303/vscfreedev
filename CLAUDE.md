@@ -51,8 +51,8 @@ enum YuhaResponse {
 ```
 
 **通信フロー**:
-1. Client → Server: `YuhaRequest`
-2. Server → Client: `YuhaResponse`
+1. Client → Server: `ProtocolRequest`
+2. Server → Client: `ProtocolResponse`
 3. 双方向データは`PollData`リクエストによるLong Pollingで実現
 
 **利点**:
