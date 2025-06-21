@@ -1,6 +1,6 @@
-//! # Simple Protocol Implementation
+//! # Yuha Protocol Implementation
 //!
-//! This module defines the simple protocol used for direct client-server communication.
+//! This module defines the protocol used for direct client-server communication.
 //! It follows a straightforward request-response pattern with long polling support
 //! for pseudo-bidirectional communication.
 //!
@@ -24,19 +24,19 @@
 //! ## Usage Example
 //!
 //! ```rust,no_run
-//! use yuha_core::protocol::simple::{SimpleRequest, SimpleResponse};
+//! use yuha_core::protocol::{YuhaRequest, YuhaResponse};
 //!
 //! // Create a clipboard request
-//! let request = SimpleRequest::GetClipboard;
+//! let request = YuhaRequest::GetClipboard;
 //!
 //! // Send via protocol implementation
 //! let response = protocol.send_request(request).await?;
 //!
 //! match response {
-//!     SimpleResponse::Data { items } => {
+//!     YuhaResponse::Data { items } => {
 //!         // Process clipboard data
 //!     }
-//!     SimpleResponse::Error { message } => {
+//!     YuhaResponse::Error { message } => {
 //!         // Handle error
 //!     }
 //!     _ => {}
@@ -48,9 +48,9 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Simple protocol request types
+/// Protocol request types
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SimpleRequest {
+pub enum YuhaRequest {
     PollData,
     StartPortForward {
         local_port: u16,
@@ -73,9 +73,9 @@ pub enum SimpleRequest {
     },
 }
 
-/// Simple protocol response types
+/// Protocol response types
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SimpleResponse {
+pub enum YuhaResponse {
     Data { items: Vec<ResponseItem> },
     Success,
     Error { message: String },
@@ -90,11 +90,11 @@ pub enum ResponseItem {
     ClipboardContent { content: String },
 }
 
-impl Message for SimpleRequest {}
-impl Request for SimpleRequest {}
+impl Message for YuhaRequest {}
+impl Request for YuhaRequest {}
 
-impl Message for SimpleResponse {}
-impl Response for SimpleResponse {}
+impl Message for YuhaResponse {}
+impl Response for YuhaResponse {}
 
 impl Message for ResponseItem {}
 

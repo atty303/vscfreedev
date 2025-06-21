@@ -43,6 +43,9 @@ pub mod simple_client_transport;
 pub mod transport;
 pub mod transport_factory;
 
+// Re-export main client type for convenience
+pub use simple_client_transport::YuhaClient;
+
 /// Path to the remote binary built by build.rs.
 ///
 /// This constant is set at compile time by the build script and points to the

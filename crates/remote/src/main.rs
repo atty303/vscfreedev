@@ -12,7 +12,7 @@ use tokio::sync::{RwLock, mpsc};
 use tracing::{error, info, warn};
 
 use yuha_core::message_channel::MessageChannel;
-use yuha_core::protocol::simple::{ResponseBuffer, SimpleRequest, SimpleResponse};
+use yuha_core::protocol::{ResponseBuffer, YuhaRequest, YuhaResponse};
 use yuha_core::{browser, clipboard};
 use yuha_remote::ipc::{IpcClient, IpcCommand, IpcResponse, get_default_ipc_socket_path};
 
@@ -149,9 +149,9 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
     }
 
     /// Handle a single request
-    async fn handle_request(&mut self, request: SimpleRequest) -> SimpleResponse {
+    async fn handle_request(&mut self, request: YuhaRequest) -> YuhaResponse {
         match request {
-            SimpleRequest::PollData => {
+            YuhaRequest::PollData => {
                 let mut buffer = self.response_buffer.write().await;
                 let items = buffer.take_items();
                 if items.is_empty() {
@@ -160,12 +160,12 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
                     self.wait_for_data().await;
                     let mut buffer = self.response_buffer.write().await;
                     let items = buffer.take_items();
-                    SimpleResponse::Data { items }
+                    YuhaResponse::Data { items }
                 } else {
-                    SimpleResponse::Data { items }
+                    YuhaResponse::Data { items }
                 }
             }
-            SimpleRequest::StartPortForward {
+            YuhaRequest::StartPortForward {
                 local_port,
                 remote_host,
                 remote_port,
@@ -173,16 +173,14 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
                 self.start_port_forward(local_port, remote_host, remote_port)
                     .await
             }
-            SimpleRequest::StopPortForward { local_port } => {
-                self.stop_port_forward(local_port).await
-            }
-            SimpleRequest::PortForwardData {
+            YuhaRequest::StopPortForward { local_port } => self.stop_port_forward(local_port).await,
+            YuhaRequest::PortForwardData {
                 connection_id,
                 data,
             } => self.forward_data(connection_id, data).await,
-            SimpleRequest::GetClipboard => self.get_clipboard().await,
-            SimpleRequest::SetClipboard { content } => self.set_clipboard(content).await,
-            SimpleRequest::OpenBrowser { url } => self.open_browser(url).await,
+            YuhaRequest::GetClipboard => self.get_clipboard().await,
+            YuhaRequest::SetClipboard { content } => self.set_clipboard(content).await,
+            YuhaRequest::OpenBrowser { url } => self.open_browser(url).await,
         }
     }
 
@@ -214,7 +212,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
         local_port: u16,
         remote_host: String,
         remote_port: u16,
-    ) -> SimpleResponse {
+    ) -> YuhaResponse {
         info!(
             "Starting port forward: {} -> {}:{}",
             local_port, remote_host, remote_port
@@ -293,16 +291,16 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
                     }
                 });
 
-                SimpleResponse::Success
+                YuhaResponse::Success
             }
-            Err(e) => SimpleResponse::Error {
+            Err(e) => YuhaResponse::Error {
                 message: format!("Failed to bind to {}: {}", listener_addr, e),
             },
         }
     }
 
     /// Stop port forwarding
-    async fn stop_port_forward(&self, local_port: u16) -> SimpleResponse {
+    async fn stop_port_forward(&self, local_port: u16) -> YuhaResponse {
         info!("Stopping port forward for port {}", local_port);
 
         // Close all connections for this port
@@ -318,53 +316,53 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteServer<T> {
             buffer.add_close_connection(connection_id);
         }
 
-        SimpleResponse::Success
+        YuhaResponse::Success
     }
 
     /// Forward data to connection
-    async fn forward_data(&self, connection_id: u32, data: Bytes) -> SimpleResponse {
+    async fn forward_data(&self, connection_id: u32, data: Bytes) -> YuhaResponse {
         let connections = self.active_connections.read().await;
         if let Some(sender) = connections.get(&connection_id) {
             if let Err(e) = sender.send(data) {
                 warn!("Failed to send data to connection {}: {}", connection_id, e);
-                return SimpleResponse::Error {
+                return YuhaResponse::Error {
                     message: format!("Failed to send data: {}", e),
                 };
             }
         }
-        SimpleResponse::Success
+        YuhaResponse::Success
     }
 
     /// Get clipboard content
-    async fn get_clipboard(&self) -> SimpleResponse {
+    async fn get_clipboard(&self) -> YuhaResponse {
         match clipboard::get_clipboard() {
             Ok(content) => {
                 let mut buffer = self.response_buffer.write().await;
                 buffer.add_clipboard_content(content);
                 let items = buffer.take_items();
-                SimpleResponse::Data { items }
+                YuhaResponse::Data { items }
             }
-            Err(e) => SimpleResponse::Error {
+            Err(e) => YuhaResponse::Error {
                 message: format!("Failed to get clipboard: {}", e),
             },
         }
     }
 
     /// Set clipboard content
-    async fn set_clipboard(&self, content: String) -> SimpleResponse {
+    async fn set_clipboard(&self, content: String) -> YuhaResponse {
         match clipboard::set_clipboard(&content) {
-            Ok(()) => SimpleResponse::Success,
-            Err(e) => SimpleResponse::Error {
+            Ok(()) => YuhaResponse::Success,
+            Err(e) => YuhaResponse::Error {
                 message: format!("Failed to set clipboard: {}", e),
             },
         }
     }
 
     /// Open browser with URL
-    async fn open_browser(&self, url: String) -> SimpleResponse {
+    async fn open_browser(&self, url: String) -> YuhaResponse {
         match browser::open_url(&url).await {
-            Ok(()) => SimpleResponse::Success,
-            Err(e) => SimpleResponse::Error {
+            Ok(()) => YuhaResponse::Success,
+            Err(e) => YuhaResponse::Error {
                 message: format!("Failed to open browser: {}", e),
             },
         }

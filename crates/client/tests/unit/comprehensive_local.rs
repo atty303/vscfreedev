@@ -28,7 +28,7 @@
 use serial_test::serial;
 use std::time::Duration;
 use tokio::time::sleep;
-use yuha_client::simple_client_transport::SimpleYuhaClientTransport;
+use yuha_client::YuhaClient;
 use yuha_client::transport::LocalTransport;
 
 use crate::shared::test_utils::*;
@@ -36,7 +36,7 @@ use crate::shared::test_utils::*;
 // Global client to prevent multiple simultaneous processes
 static CLIENT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-async fn get_shared_client() -> anyhow::Result<SimpleYuhaClientTransport<LocalTransport>> {
+async fn get_shared_client() -> anyhow::Result<YuhaClient<LocalTransport>> {
     let _lock = CLIENT_LOCK.lock().await;
     create_local_client().await
 }
@@ -57,7 +57,7 @@ async fn test_basic_connection_and_polling() {
     let client = get_shared_client().await.expect("Failed to create client");
 
     // Test basic polling - client already connected
-    // SimpleYuhaClientTransport doesn't expose polling directly,
+    // YuhaClient doesn't expose polling directly,
     // but we can test it's connected by doing an operation
     let result = client.get_clipboard().await;
     assert!(result.is_ok(), "Failed to communicate with server");

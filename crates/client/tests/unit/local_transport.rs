@@ -3,7 +3,7 @@ use serde_json;
 use serial_test::serial;
 use std::path::PathBuf;
 use yuha_client::transport::{LocalTransport, LocalTransportConfig, TransportConfig};
-use yuha_core::protocol::simple::SimpleRequest;
+use yuha_core::protocol::YuhaRequest;
 
 #[tokio::test]
 #[serial]
@@ -48,18 +48,18 @@ async fn test_protocol_message_creation() -> Result<()> {
 
     // Create various protocol messages
     let messages = vec![
-        SimpleRequest::PollData,
-        SimpleRequest::GetClipboard,
-        SimpleRequest::SetClipboard {
+        YuhaRequest::PollData,
+        YuhaRequest::GetClipboard,
+        YuhaRequest::SetClipboard {
             content: "test".to_string(),
         },
-        SimpleRequest::StartPortForward {
+        YuhaRequest::StartPortForward {
             local_port: 8080,
             remote_host: "localhost".to_string(),
             remote_port: 80,
         },
-        SimpleRequest::StopPortForward { local_port: 8080 },
-        SimpleRequest::OpenBrowser {
+        YuhaRequest::StopPortForward { local_port: 8080 },
+        YuhaRequest::OpenBrowser {
             url: "https://example.com".to_string(),
         },
     ];
@@ -69,7 +69,7 @@ async fn test_protocol_message_creation() -> Result<()> {
         println!("Created message: {}", json);
 
         // Verify we can parse it back
-        let _parsed: SimpleRequest = serde_json::from_str(&json)?;
+        let _parsed: YuhaRequest = serde_json::from_str(&json)?;
     }
 
     println!("Protocol message creation test passed!");

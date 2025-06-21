@@ -1,13 +1,13 @@
-//! # Simple Client with Transport Abstraction
+//! # Yuha Client with Transport Abstraction
 //!
-//! This module provides a simplified client implementation that works with any
+//! This module provides a client implementation that works with any
 //! transport type. It abstracts away the complexity of different connection methods
 //! while providing a clean, consistent API for client applications.
 //!
 //! ## Key Features
 //!
 //! - **Transport Agnostic**: Works with SSH, Local, TCP, and other transports
-//! - **Simple API**: Request-response pattern with async/await support
+//! - **Clean API**: Request-response pattern with async/await support
 //! - **Error Handling**: Comprehensive error reporting and recovery
 //! - **Connection Management**: Automatic connection handling and lifecycle
 //!
@@ -15,7 +15,7 @@
 //!
 //! ```rust,no_run
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! use yuha_client::simple_client_transport::SimpleYuhaClientTransport;
+//! use yuha_client::YuhaClient;
 //! use yuha_client::transport::local::LocalTransport;
 //! use yuha_client::transport::{LocalTransportConfig, TransportConfig};
 //!
@@ -23,7 +23,7 @@
 //! let local_config = LocalTransportConfig::default();
 //! let transport_config = TransportConfig::default();
 //! let transport = LocalTransport::new(local_config, transport_config);
-//! let mut client = SimpleYuhaClientTransport::new(transport);
+//! let mut client = YuhaClient::new(transport);
 //!
 //! // Connect and use
 //! client.connect().await?;
@@ -34,12 +34,7 @@
 //!
 //! ## Type Alias
 //!
-//! For convenience, `SimpleYuhaClient<T>` is provided as a type alias:
-//!
-//! ```rust,no_run
-//! # use yuha_client::simple_client_transport::SimpleYuhaClientTransport;
-//! type SimpleYuhaClient<T> = SimpleYuhaClientTransport<T>;
-//! ```
+//! The type is also available as `YuhaClient<T>` for direct usage.
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -48,12 +43,12 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use yuha_core::message_channel::MessageChannel;
-use yuha_core::protocol::simple::{ResponseItem, SimpleRequest, SimpleResponse};
+use yuha_core::protocol::{ResponseItem, YuhaRequest, YuhaResponse};
 
 use crate::ClientError;
 use crate::transport::{Transport, TransportConfig};
 
-/// Simplified client using request-response protocol with transport abstraction.
+/// Yuha client using request-response protocol with transport abstraction.
 ///
 /// This client provides a high-level interface for communicating with remote Yuha servers
 /// through any transport implementation. It handles connection management, request serialization,
@@ -67,26 +62,26 @@ use crate::transport::{Transport, TransportConfig};
 ///
 /// ```rust,no_run
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// use yuha_client::simple_client_transport::SimpleYuhaClientTransport;
+/// use yuha_client::YuhaClient;
 /// use yuha_client::transport::local::LocalTransport;
 /// use yuha_client::transport::{LocalTransportConfig, TransportConfig};
 ///
 /// let local_config = LocalTransportConfig::default();
 /// let transport_config = TransportConfig::default();
 /// let transport = LocalTransport::new(local_config, transport_config);
-/// let mut client = SimpleYuhaClientTransport::new(transport);
+/// let mut client = YuhaClient::new(transport);
 /// client.connect().await?;
 /// # Ok(())
 /// # }
 /// ```
-pub struct SimpleYuhaClientTransport<T: Transport> {
+pub struct YuhaClient<T: Transport> {
     /// The underlying transport for communication
     transport: T,
     /// Message channel for sending/receiving protocol messages
     message_channel: Option<Arc<Mutex<MessageChannel<T::Stream>>>>,
 }
 
-impl<T: Transport> SimpleYuhaClientTransport<T> {
+impl<T: Transport> YuhaClient<T> {
     /// Create a new client with the given transport
     pub fn new(transport: T) -> Self {
         Self {
@@ -115,7 +110,7 @@ impl<T: Transport> SimpleYuhaClientTransport<T> {
     }
 
     /// Send a request and wait for response
-    async fn send_request(&self, request: SimpleRequest) -> Result<SimpleResponse, ClientError> {
+    async fn send_request(&self, request: YuhaRequest) -> Result<YuhaResponse, ClientError> {
         let channel = self
             .message_channel
             .as_ref()
@@ -143,35 +138,35 @@ impl<T: Transport> SimpleYuhaClientTransport<T> {
         remote_host: String,
         remote_port: u16,
     ) -> Result<(), ClientError> {
-        let request = SimpleRequest::StartPortForward {
+        let request = YuhaRequest::StartPortForward {
             local_port,
             remote_host: remote_host.clone(),
             remote_port,
         };
 
         match self.send_request(request).await? {
-            SimpleResponse::Success => {
+            YuhaResponse::Success => {
                 info!(
                     "Port forwarding started: {} -> {}:{}",
                     local_port, remote_host, remote_port
                 );
                 Ok(())
             }
-            SimpleResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
+            YuhaResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
             _ => Err(ClientError::Channel("Unexpected response type".to_string())),
         }
     }
 
     /// Stop port forwarding
     pub async fn stop_port_forward(&self, local_port: u16) -> Result<(), ClientError> {
-        let request = SimpleRequest::StopPortForward { local_port };
+        let request = YuhaRequest::StopPortForward { local_port };
 
         match self.send_request(request).await? {
-            SimpleResponse::Success => {
+            YuhaResponse::Success => {
                 info!("Port forwarding stopped for port {}", local_port);
                 Ok(())
             }
-            SimpleResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
+            YuhaResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
             _ => Err(ClientError::Channel("Unexpected response type".to_string())),
         }
     }
@@ -182,24 +177,24 @@ impl<T: Transport> SimpleYuhaClientTransport<T> {
         connection_id: u32,
         data: Bytes,
     ) -> Result<(), ClientError> {
-        let request = SimpleRequest::PortForwardData {
+        let request = YuhaRequest::PortForwardData {
             connection_id,
             data,
         };
 
         match self.send_request(request).await? {
-            SimpleResponse::Success => Ok(()),
-            SimpleResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
+            YuhaResponse::Success => Ok(()),
+            YuhaResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
             _ => Err(ClientError::Channel("Unexpected response type".to_string())),
         }
     }
 
     /// Get clipboard content
     pub async fn get_clipboard(&self) -> Result<String, ClientError> {
-        let request = SimpleRequest::GetClipboard;
+        let request = YuhaRequest::GetClipboard;
 
         match self.send_request(request).await? {
-            SimpleResponse::Data { items } => {
+            YuhaResponse::Data { items } => {
                 for item in items {
                     if let ResponseItem::ClipboardContent { content } = item {
                         return Ok(content);
@@ -209,40 +204,40 @@ impl<T: Transport> SimpleYuhaClientTransport<T> {
                     "No clipboard content in response".to_string(),
                 ))
             }
-            SimpleResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
+            YuhaResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
             _ => Err(ClientError::Channel("Unexpected response type".to_string())),
         }
     }
 
     /// Set clipboard content
     pub async fn set_clipboard(&self, content: String) -> Result<(), ClientError> {
-        let request = SimpleRequest::SetClipboard { content };
+        let request = YuhaRequest::SetClipboard { content };
 
         match self.send_request(request).await? {
-            SimpleResponse::Success => Ok(()),
-            SimpleResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
+            YuhaResponse::Success => Ok(()),
+            YuhaResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
             _ => Err(ClientError::Channel("Unexpected response type".to_string())),
         }
     }
 
     /// Open browser with URL
     pub async fn open_browser(&self, url: String) -> Result<(), ClientError> {
-        let request = SimpleRequest::OpenBrowser { url };
+        let request = YuhaRequest::OpenBrowser { url };
 
         match self.send_request(request).await? {
-            SimpleResponse::Success => Ok(()),
-            SimpleResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
+            YuhaResponse::Success => Ok(()),
+            YuhaResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
             _ => Err(ClientError::Channel("Unexpected response type".to_string())),
         }
     }
 
     /// Poll for data (used for simulating bidirectional communication)
     pub async fn poll_data(&self) -> Result<Vec<ResponseItem>, ClientError> {
-        let request = SimpleRequest::PollData;
+        let request = YuhaRequest::PollData;
 
         match self.send_request(request).await? {
-            SimpleResponse::Data { items } => Ok(items),
-            SimpleResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
+            YuhaResponse::Data { items } => Ok(items),
+            YuhaResponse::Error { message } => Err(ClientError::RemoteExecution(message)),
             _ => Err(ClientError::Channel("Unexpected response type".to_string())),
         }
     }
@@ -276,7 +271,7 @@ impl<T: Transport> SimpleYuhaClientTransport<T> {
 pub async fn connect_local(
     binary_path: std::path::PathBuf,
     transport_config: TransportConfig,
-) -> Result<SimpleYuhaClientTransport<crate::transport::LocalTransport>, ClientError> {
+) -> Result<YuhaClient<crate::transport::LocalTransport>, ClientError> {
     use crate::transport::{LocalTransport, LocalTransportConfig};
 
     let local_config = LocalTransportConfig {
@@ -285,7 +280,7 @@ pub async fn connect_local(
     };
 
     let transport = LocalTransport::new(local_config, transport_config);
-    let mut client = SimpleYuhaClientTransport::new(transport);
+    let mut client = YuhaClient::new(transport);
     client.connect().await?;
 
     Ok(client)
@@ -299,7 +294,7 @@ pub async fn connect_ssh_transport(
     password: Option<&str>,
     key_path: Option<&std::path::Path>,
     transport_config: TransportConfig,
-) -> Result<SimpleYuhaClientTransport<crate::transport::SshTransport>, ClientError> {
+) -> Result<YuhaClient<crate::transport::SshTransport>, ClientError> {
     use crate::transport::{SshTransport, SshTransportConfig};
 
     let ssh_config = SshTransportConfig {
@@ -311,7 +306,7 @@ pub async fn connect_ssh_transport(
     };
 
     let transport = SshTransport::new(ssh_config, transport_config);
-    let mut client = SimpleYuhaClientTransport::new(transport);
+    let mut client = YuhaClient::new(transport);
     client.connect().await?;
 
     Ok(client)
